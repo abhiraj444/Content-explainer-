@@ -178,16 +178,37 @@ export function resolveAiConfig(configOrKey?: string | AiConfig): AiConfig {
         };
 
         const storedTtsProvider = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_provider') : null) as any;
-        const storedTtsKey = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_api_key') : '') || '';
+        const rawStoredTtsKey = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_api_key') : '') || '';
         const storedTtsEndpoint = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_endpoint') : '') || 'https://generativelanguage.googleapis.com';
         const storedTtsModel = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_model') : '') || DEFAULT_TTS_MODEL;
         const storedTtsVoice = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_voice') : '') || DEFAULT_TTS_VOICE;
         const storedTtsSpeed = typeof window !== 'undefined' ? parseFloat(localStorage.getItem('app_tts_speed') || '1') : 1.0;
         const storedTtsAudioPref = (typeof window !== 'undefined' ? (localStorage.getItem('app_tts_audio_preference') as any) : null) || 'english_indian';
 
+        // Intelligently fallback TTS key to provider key vault if not explicitly set
+        let resolvedTtsKey = rawStoredTtsKey;
+        if (!resolvedTtsKey && typeof window !== 'undefined') {
+            const activeTtsPid = storedTtsProvider || DEFAULT_TTS_PROVIDER;
+            if (activeTtsPid === 'gemini') {
+                resolvedTtsKey = storedGeminiKey || localStorage.getItem('gemini_api_key') || localStorage.getItem('app_provider_key_gemini') || '';
+            } else if (activeTtsPid === 'groq') {
+                resolvedTtsKey = storedSttKey || localStorage.getItem('app_stt_provider_key_groq') || localStorage.getItem('app_provider_key_groq') || '';
+            } else if (activeTtsPid === 'openai') {
+                resolvedTtsKey = localStorage.getItem('app_provider_key_openai') || localStorage.getItem('app_stt_provider_key_openai') || '';
+            } else if (activeTtsPid === 'openrouter') {
+                resolvedTtsKey = localStorage.getItem('app_provider_key_openrouter') || '';
+            } else if (activeTtsPid === 'elevenlabs') {
+                resolvedTtsKey = localStorage.getItem('app_tts_provider_key_elevenlabs') || '';
+            } else if (activeTtsPid === 'sarvam') {
+                resolvedTtsKey = localStorage.getItem('app_tts_provider_key_sarvam') || '';
+            } else if (activeTtsPid === 'custom') {
+                resolvedTtsKey = storedCustomKey || '';
+            }
+        }
+
         const ttsSettings: TtsSettings = {
             provider: storedTtsProvider || DEFAULT_TTS_PROVIDER,
-            apiKey: storedTtsKey || undefined,
+            apiKey: resolvedTtsKey || undefined,
             endpoint: storedTtsEndpoint,
             model: storedTtsModel,
             voice: storedTtsVoice,
@@ -3015,8 +3036,26 @@ Begin spoken transcript now:`;
         const effectiveEndpoint = params.endpoint || ttsSettings?.endpoint;
         const effectiveModel = params.model || ttsSettings?.model;
         const effectiveAudioPreference = params.audioPreference || ttsSettings?.audioPreference || (params.language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
-        // Strict key isolation: Only use TTS key, never fall back to main generation/LLM key
-        const effectiveKey = params.apiKey || ttsSettings?.apiKey || undefined;
+        
+        // Resolve effective key: first try explicit param, then ttsSettings, then provider vault fallback
+        let effectiveKey = params.apiKey || ttsSettings?.apiKey;
+        if (!effectiveKey) {
+            if (effectiveProvider === 'gemini') {
+                effectiveKey = config.geminiApiKey || config.apiKey || (typeof window !== 'undefined' ? (localStorage.getItem('gemini_api_key') || localStorage.getItem('app_provider_key_gemini') || '') : '');
+            } else if (effectiveProvider === 'groq') {
+                effectiveKey = config.sttConfig?.apiKey || (typeof window !== 'undefined' ? (localStorage.getItem('app_stt_provider_key_groq') || localStorage.getItem('app_provider_key_groq') || localStorage.getItem('app_stt_api_key') || '') : '');
+            } else if (effectiveProvider === 'openai') {
+                effectiveKey = typeof window !== 'undefined' ? (localStorage.getItem('app_tts_provider_key_openai') || localStorage.getItem('app_provider_key_openai') || localStorage.getItem('app_stt_provider_key_openai') || '') : '';
+            } else if (effectiveProvider === 'openrouter') {
+                effectiveKey = typeof window !== 'undefined' ? (localStorage.getItem('app_tts_provider_key_openrouter') || localStorage.getItem('app_provider_key_openrouter') || '') : '';
+            } else if (effectiveProvider === 'elevenlabs') {
+                effectiveKey = typeof window !== 'undefined' ? (localStorage.getItem('app_tts_provider_key_elevenlabs') || '') : '';
+            } else if (effectiveProvider === 'sarvam') {
+                effectiveKey = typeof window !== 'undefined' ? (localStorage.getItem('app_tts_provider_key_sarvam') || '') : '';
+            } else if (effectiveProvider === 'custom') {
+                effectiveKey = config.customApiKey || config.apiKey || (typeof window !== 'undefined' ? (localStorage.getItem('app_custom_api_key') || '') : '');
+            }
+        }
 
         const response = await fetch('/api/ai/tts', {
             method: 'POST',

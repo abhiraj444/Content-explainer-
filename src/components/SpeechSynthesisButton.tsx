@@ -341,6 +341,12 @@ export function SpeechSynthesisButton({
         return;
       }
       console.warn('Voice synthesis encountered issue, using browser speech fallback:', err);
+      const errorMsg = err?.message || 'AI speech synthesis encountered an error';
+      toast({
+        title: 'AI Voice Warning',
+        description: `${errorMsg}. Playing with browser speech.`,
+        variant: 'destructive',
+      });
       toggleBrowserSpeak(generatedScript || effectiveText);
       setStage('idle');
     } finally {

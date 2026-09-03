@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
 import type { AiProvider, AiConfig, SttProvider, SttConfig, TtsProvider, TtsSettings, CustomTtsFormat, TtsAudioPreference } from '@/types';
 import { KNOWN_TTS_PROVIDERS } from '@/lib/tts-voices';
 
@@ -880,9 +880,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         }
     };
 
-    const getSavedTtsKeyForProvider = (providerId: string): string => {
-        return ttsProviderKeys[providerId] || localStorage.getItem(`app_tts_provider_key_${providerId}`) || '';
-    };
+    const getSavedTtsKeyForProvider = useCallback((providerId: string): string => {
+        if (ttsProviderKeys[providerId]) return ttsProviderKeys[providerId];
+        const standalone = typeof window !== 'undefined' ? localStorage.getItem(`app_tts_provider_key_${providerId}`) : '';
+        if (standalone) return standalone;
+        if (providerId === 'gemini') return geminiApiKey || providerKeys['gemini'] || (typeof window !== 'undefined' ? (localStorage.getItem('gemini_api_key') || '') : '');
+        if (providerId === 'groq') return sttApiKey || sttProviderKeys['groq'] || providerKeys['groq'] || '';
+        if (providerId === 'openai') return providerKeys['openai'] || sttProviderKeys['openai'] || '';
+        if (providerId === 'openrouter') return providerKeys['openrouter'] || '';
+        if (providerId === 'custom') return customApiKey || providerKeys['custom'] || '';
+        return '';
+    }, [ttsProviderKeys, geminiApiKey, providerKeys, sttApiKey, sttProviderKeys, customApiKey]);
 
     const saveAllTtsProviderKeys = (keys: Record<string, string>, currentPid?: string) => {
         setTtsProviderKeys(keys);
@@ -1092,7 +1100,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
     const ttsSettings: TtsSettings = useMemo(() => ({
         provider: ttsProvider,
-        apiKey: ttsApiKey,
+        apiKey: ttsApiKey || getSavedTtsKeyForProvider(ttsProvider),
         endpoint: ttsEndpoint,
         model: ttsModel || DEFAULT_TTS_MODEL,
         voice: ttsVoice || DEFAULT_TTS_VOICE,
@@ -1102,7 +1110,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         customParams: ttsCustomParams,
         sarvamLanguage: ttsSarvamLanguage,
         audioPreference: ttsAudioPreference,
-    }), [ttsProvider, ttsApiKey, ttsEndpoint, ttsModel, ttsVoice, ttsSpeed, ttsCustomFormat, ttsCustomHeaders, ttsCustomParams, ttsSarvamLanguage, ttsAudioPreference]);
+    }), [ttsProvider, ttsApiKey, getSavedTtsKeyForProvider, ttsEndpoint, ttsModel, ttsVoice, ttsSpeed, ttsCustomFormat, ttsCustomHeaders, ttsCustomParams, ttsSarvamLanguage, ttsAudioPreference]);
 
     const aiConfig: AiConfig = useMemo(() => ({
         provider: aiProvider,

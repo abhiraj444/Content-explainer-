@@ -276,7 +276,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       },
     });
 
-    const validGeminiVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'];
+    const validGeminiVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr', 'Aoede', 'Leda', 'Orus'];
     const selectedVoice = validGeminiVoices.includes(voice) ? voice : 'Kore';
 
     let spokenPrompt = cleanText;
@@ -286,12 +286,15 @@ export async function performTtsSynthesis(body: any): Promise<{
       spokenPrompt = `Speak this explanation in clear, articulate English with a natural, friendly Indian accent and warm educator cadence:\n\n${cleanText}`;
     }
 
-    const ttsModelToTry = model || 'gemini-3.1-flash-tts-preview';
+    const requestedModel = model || 'gemini-3.1-flash-tts-preview';
+    const modelsToTry = [requestedModel, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.1-flash-tts-preview'].filter((v, i, a) => a.indexOf(v) === i);
+    
     let response: any = null;
     let lastErr: any = null;
+    let successfulModel = requestedModel;
 
     const requestDetails = {
-      url: `https://generativelanguage.googleapis.com/v1beta/models/${ttsModelToTry}:generateContent`,
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:generateContent`,
       method: 'POST',
       headers: maskHeaders({
         'Content-Type': 'application/json',
@@ -299,7 +302,7 @@ export async function performTtsSynthesis(body: any): Promise<{
         ...userHeaders,
       }),
       body: {
-        model: ttsModelToTry,
+        model: requestedModel,
         contents: [{ parts: [{ text: spokenPrompt }] }],
         config: {
           responseModalities: ['AUDIO'],
@@ -312,38 +315,57 @@ export async function performTtsSynthesis(body: any): Promise<{
       },
     };
 
-    // Exponential retry for transient rate limits (429/resource_exhausted/503)
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        if (attempt > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 600 * Math.pow(2, attempt - 1)));
-        }
-        response = await ai.models.generateContent({
-          model: ttsModelToTry,
-          contents: [{ parts: [{ text: spokenPrompt }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: selectedVoice },
+    // Try candidate models with retry for rate limits
+    modelLoop: for (const candidateModel of modelsToTry) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          if (attempt > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 500 * Math.pow(2, attempt - 1)));
+          }
+          response = await ai.models.generateContent({
+            model: candidateModel,
+            contents: [{ parts: [{ text: spokenPrompt }] }],
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: selectedVoice },
+                },
               },
             },
-          },
-        });
-        if (response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
-          break;
-        }
-      } catch (err: any) {
-        lastErr = err;
-        const msg = (err?.message || '').toLowerCase();
-        const isRetryable = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('503') || msg.includes('overloaded');
-        if (!isRetryable || attempt === 2) {
-          break;
+          });
+
+          const parts = response?.candidates?.[0]?.content?.parts || [];
+          const hasAudio = parts.some((p: any) => p?.inlineData?.data);
+          if (hasAudio) {
+            successfulModel = candidateModel;
+            break modelLoop;
+          }
+        } catch (err: any) {
+          lastErr = err;
+          const msg = (err?.message || '').toLowerCase();
+          const isRetryable = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('503') || msg.includes('overloaded');
+          const isNotFound = msg.includes('not found') || msg.includes('404') || msg.includes('unsupported') || msg.includes('invalid argument');
+          if (isNotFound) {
+            // Immediately try next model in candidate list
+            break;
+          }
+          if (!isRetryable || attempt === 1) {
+            break;
+          }
         }
       }
     }
 
-    const audioPart = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+    const parts = response?.candidates?.[0]?.content?.parts || [];
+    let audioPart: any = null;
+    for (const part of parts) {
+      if (part?.inlineData?.data) {
+        audioPart = part.inlineData;
+        break;
+      }
+    }
+
     if (!audioPart || !audioPart.data) {
       const errLower = (lastErr?.message || '').toLowerCase();
       const isQuota = errLower.includes('resource_exhausted') || errLower.includes('quota') || errLower.includes('429');
