@@ -449,6 +449,54 @@ export function isAbortError(err: any): boolean {
     return msg.includes('aborted') || msg.includes('user aborted') || msg.includes('the operation was aborted');
 }
 
+function parseCustomHeaders(headersStr?: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (!headersStr || typeof headersStr !== 'string') return result;
+
+    const lines = headersStr.split('\n');
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+
+        const colonIdx = trimmed.indexOf(':');
+        if (colonIdx > 0) {
+            const key = trimmed.slice(0, colonIdx).trim();
+            const val = trimmed.slice(colonIdx + 1).trim();
+            if (key && val) {
+                result[key] = val;
+            }
+        }
+    }
+    return result;
+}
+
+function applyCustomParams(target: Record<string, any>, customParams?: string | Record<string, any>): void {
+    if (!customParams) return;
+    let parsed: Record<string, any> | null = null;
+    if (typeof customParams === 'string') {
+        const trimmed = customParams.trim();
+        if (!trimmed) return;
+        try {
+            parsed = JSON.parse(trimmed);
+        } catch (e: any) {
+            console.warn('Could not parse customParams JSON in ClientSideAiService:', e.message);
+            return;
+        }
+    } else if (typeof customParams === 'object' && customParams !== null) {
+        parsed = customParams;
+    }
+
+    if (parsed && typeof parsed === 'object') {
+        for (const [key, val] of Object.entries(parsed)) {
+            if (val === null || val === undefined) {
+                delete target[key];
+            } else {
+                target[key] = val;
+            }
+        }
+    }
+}
+
 /**
  * Universal prompt executor supporting both Google Gemini models (default gemini-3.7-flash, custom Gemini names)
  * and Custom OpenAI-compatible endpoints (OpenAI, OpenRouter, Groq, Ollama, DeepSeek, Mistral, etc.).
@@ -542,8 +590,10 @@ export async function executeAiPrompt(
 
         const isAnthropic = endpoint.includes('api.anthropic.com');
         const key = config.customApiKey || config.apiKey;
+        const userHeaders = parseCustomHeaders(config.customHeaders);
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
+            ...userHeaders,
         };
         if (key) {
             if (isAnthropic) {
@@ -641,6 +691,8 @@ export async function executeAiPrompt(
                 ],
                 temperature: 0.2,
             };
+
+        applyCustomParams(payload, config.customParams);
 
         const res = await fetch(endpoint, {
             method: 'POST',
@@ -2983,6 +3035,7 @@ Begin spoken transcript now:`;
                 audioPreference: effectiveAudioPreference,
                 customFormat: ttsSettings?.customFormat,
                 customHeaders: ttsSettings?.customHeaders,
+                customParams: (params as any).customParams || ttsSettings?.customParams,
                 sarvamLanguage: ttsSettings?.sarvamLanguage,
             }),
             signal: params.signal,

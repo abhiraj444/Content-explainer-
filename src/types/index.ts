@@ -39,11 +39,24 @@ export interface TableContent {
 
 export type ContentItem = ParagraphContent | BulletListContent | NumberedListContent | NoteContent | TableContent;
 
+export interface AudioExplanationData {
+    audioDataUrl?: string;
+    audioBase64?: string;
+    mimeType?: string;
+    script?: string;
+    voice?: string;
+    provider?: string;
+    audioPreference?: string;
+    timestamp?: number;
+    duration?: number;
+}
+
 export interface SlideDiscussionItem {
     q: string;
     a: string;
     reasoning?: string;
     timestamp?: number;
+    audioExplanation?: AudioExplanationData;
 }
 
 export interface Slide {
@@ -53,6 +66,7 @@ export interface Slide {
     clinicalPearls?: string[]; // High-yield medical pearls / viva facts
     proactiveQuestions?: string[]; // Proactive board / deep-dive questions for this slide
     discussions?: SlideDiscussionItem[]; // In-slide viva Q&A and follow-up discussion history
+    audioExplanation?: AudioExplanationData;
 }
 
 export interface StructuredQuestion {
@@ -69,6 +83,8 @@ export interface FollowUpThread {
     timestamp: number;
     source?: 'diagnosis' | 'slide';
     slideTitle?: string;
+    images?: string[];
+    audioExplanation?: AudioExplanationData;
 }
 
 export interface DiagnosisItem {
@@ -274,6 +290,7 @@ export interface TtsSettings {
     autoPlay?: boolean;
     customFormat?: CustomTtsFormat;
     customHeaders?: string;
+    customParams?: string;
     sarvamLanguage?: string;
     audioPreference?: TtsAudioPreference;
 }
@@ -293,6 +310,8 @@ export interface AiConfig {
     customEndpoint?: string;
     customApiKey?: string;
     customModel?: string;
+    customParams?: string;
+    customHeaders?: string;
     thinkingBudget?: number;
     enableReasoning?: boolean;
     sttConfig?: SttConfig;

@@ -1024,6 +1024,20 @@ function ContentGeneratorContent() {
     }
   };
 
+  const handleUpdateFollowUpThreads = async (updatedThreads: FollowUpThread[]) => {
+    setFollowUpThreads(updatedThreads);
+    if (currentCaseId) {
+      const caseData = await LocalDataService.getCase(currentCaseId);
+      if (caseData) {
+        caseData.outputData = {
+          ...caseData.outputData,
+          followUpThreads: updatedThreads,
+        };
+        await LocalDataService.saveCase(caseData);
+      }
+    }
+  };
+
   const handleNewCase = () => {
     processedFromCaseRef.current = null;
     loadedCaseIdRef.current = null;
@@ -1737,6 +1751,7 @@ function ContentGeneratorContent() {
             threads={followUpThreads}
             onAskFollowUp={handleAskFollowUp}
             onStop={handleStopFollowUp}
+            onUpdateThreads={handleUpdateFollowUpThreads}
             isLoading={isAskingFollowUp}
             inputPrompt={followUpStreamInputPrompt}
             streamingText={followUpStreamText}

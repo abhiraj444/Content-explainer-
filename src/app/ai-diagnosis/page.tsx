@@ -680,6 +680,22 @@ function AiDiagnosisContent() {
     }
   };
 
+  const handleUpdateFollowUpThreads = async (updatedThreads: FollowUpThread[]) => {
+    setFollowUpThreads(updatedThreads);
+    if (currentCaseId) {
+      const existingCase = await LocalDataService.getCase(currentCaseId);
+      if (existingCase) {
+        await LocalDataService.saveCase({
+          ...existingCase,
+          outputData: {
+            ...existingCase.outputData,
+            followUpThreads: updatedThreads,
+          },
+        });
+      }
+    }
+  };
+
   const handleStopAnalysis = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -1452,6 +1468,7 @@ function AiDiagnosisContent() {
                   threads={followUpThreads}
                   onAskFollowUp={handleAskFollowUp}
                   onStop={handleStopFollowUp}
+                  onUpdateThreads={handleUpdateFollowUpThreads}
                   isLoading={isAskingFollowUp}
                   inputPrompt={followUpStreamInputPrompt}
                   streamingText={followUpStreamText}

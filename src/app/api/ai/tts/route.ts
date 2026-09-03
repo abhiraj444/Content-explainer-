@@ -140,6 +140,7 @@ function parseCustomHeaders(headersStr?: string): Record<string, string> {
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
+
     const colonIdx = trimmed.indexOf(':');
     if (colonIdx > 0) {
       const key = trimmed.slice(0, colonIdx).trim();
@@ -150,6 +151,37 @@ function parseCustomHeaders(headersStr?: string): Record<string, string> {
     }
   }
   return result;
+}
+
+/**
+ * Parses custom JSON parameters (string or object) and applies them to the request payload.
+ * Setting a key's value to null or undefined in customParams will explicitly delete that key from the target payload.
+ */
+function applyCustomParams(target: Record<string, any>, customParams?: string | Record<string, any>): void {
+  if (!customParams) return;
+  let parsed: Record<string, any> | null = null;
+  if (typeof customParams === 'string') {
+    const trimmed = customParams.trim();
+    if (!trimmed) return;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e: any) {
+      console.warn('Could not parse customParams JSON in TTS route:', e.message);
+      return;
+    }
+  } else if (typeof customParams === 'object' && customParams !== null) {
+    parsed = customParams;
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    for (const [key, val] of Object.entries(parsed)) {
+      if (val === null || val === undefined) {
+        delete target[key];
+      } else {
+        target[key] = val;
+      }
+    }
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -167,6 +199,7 @@ export async function POST(req: NextRequest) {
       audioPreference = 'english_indian',
       customFormat = 'auto',
       customHeaders,
+      customParams,
       sarvamLanguage,
     } = body;
 
@@ -176,6 +209,7 @@ export async function POST(req: NextRequest) {
 
     const cleanText = text.trim();
     const resolvedAudioPref = audioPreference || (language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
+    const userHeaders = parseCustomHeaders(customHeaders);
 
     // 1. Google Gemini Native TTS
     if (provider === 'gemini') {
@@ -206,24 +240,53 @@ export async function POST(req: NextRequest) {
         spokenPrompt = `Speak this explanation in clear, articulate English with a natural, friendly Indian accent and warm educator cadence:\n\n${cleanText}`;
       }
 
-      const response = await ai.models.generateContent({
-        model: model || 'gemini-3.1-flash-tts-preview',
-        contents: [{ parts: [{ text: spokenPrompt }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: selectedVoice },
-            },
-          },
-        },
-      });
+      const ttsModelToTry = model || 'gemini-3.1-flash-tts-preview';
+      let response: any = null;
+      let lastErr: any = null;
 
-      const audioPart = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      // Exponential retry for transient rate limits (429/resource_exhausted/503)
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          if (attempt > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 600 * Math.pow(2, attempt - 1)));
+          }
+          response = await ai.models.generateContent({
+            model: ttsModelToTry,
+            contents: [{ parts: [{ text: spokenPrompt }] }],
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: selectedVoice },
+                },
+              },
+            },
+          });
+          if (response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+            break;
+          }
+        } catch (err: any) {
+          lastErr = err;
+          const msg = (err?.message || '').toLowerCase();
+          const isRetryable = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('503') || msg.includes('overloaded');
+          if (!isRetryable || attempt === 2) {
+            break;
+          }
+        }
+      }
+
+      const audioPart = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
       if (!audioPart || !audioPart.data) {
+        const errLower = (lastErr?.message || '').toLowerCase();
+        const isQuota = errLower.includes('resource_exhausted') || errLower.includes('quota') || errLower.includes('429');
         return NextResponse.json(
-          { error: 'Gemini TTS did not return audio data. Please verify your model and prompt.' },
-          { status: 500 }
+          {
+            error: isQuota
+              ? 'Gemini TTS Rate Limit / Quota Exceeded. Please try again in a few moments or switch TTS provider in Settings.'
+              : `Gemini TTS did not return audio data (${lastErr?.message || 'Empty audio candidate'}).`,
+            isQuotaExhausted: isQuota,
+          },
+          { status: isQuota ? 429 : 500 }
         );
       }
 
@@ -263,19 +326,24 @@ export async function POST(req: NextRequest) {
           : 'autumn';
 
       const groqUrl = endpoint || 'https://api.groq.com/openai/v1/audio/speech';
+      const groqHeaders: Record<string, string> = {
+        Authorization: `Bearer ${activeKey}`,
+        'Content-Type': 'application/json',
+        ...userHeaders,
+      };
+      const groqBody: Record<string, any> = {
+        model: model || 'canopylabs/orpheus-v1-english',
+        input: cleanText,
+        voice: resolvedVoice,
+        speed: Math.max(0.5, Math.min(2.0, Number(speed) || 1.0)),
+        response_format: 'mp3',
+      };
+      applyCustomParams(groqBody, customParams);
+
       const response = await fetch(groqUrl, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${activeKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: model || 'canopylabs/orpheus-v1-english',
-          input: cleanText,
-          voice: resolvedVoice,
-          speed: Math.max(0.5, Math.min(2.0, Number(speed) || 1.0)),
-          response_format: 'mp3',
-        }),
+        headers: groqHeaders,
+        body: JSON.stringify(groqBody),
       });
 
       if (!response.ok) {
@@ -321,18 +389,27 @@ export async function POST(req: NextRequest) {
         ...userHeaders,
       };
 
-      // Sarvam payload: both 'text' and 'inputs' included for complete v1/v2/v3 compatibility
-      const sarvamBody = {
+      // Sarvam payload: Bulbul v3 strictly rejects 'pitch' and 'loudness'.
+      // Only legacy Bulbul v2 supports pitch and loudness.
+      const isBulbulV2 = Boolean(model && model.toLowerCase().includes('v2'));
+      const sarvamBody: Record<string, any> = {
         text: cleanText,
         inputs: [cleanText],
         target_language_code: targetLang,
-        language_code: targetLang,
         speaker: selectedSpeaker,
-        pitch: 0,
         pace: Math.max(0.5, Math.min(2.0, Number(speed) || 1.0)),
         model: model || 'bulbul:v3',
         output_audio_codec: 'wav',
+        enable_preprocessing: true,
       };
+
+      if (isBulbulV2) {
+        sarvamBody.pitch = 0;
+        sarvamBody.loudness = 1.0;
+      }
+
+      // Merge user-specified custom parameters or payload overrides
+      applyCustomParams(sarvamBody, customParams);
 
       const response = await fetch(sarvamUrl, {
         method: 'POST',
@@ -372,21 +449,26 @@ export async function POST(req: NextRequest) {
       }
 
       const openRouterUrl = endpoint || 'https://openrouter.ai/api/v1/audio/speech';
+      const openRouterHeaders: Record<string, string> = {
+        Authorization: `Bearer ${activeKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://medigen.app',
+        'X-Title': 'MediGen Voice AI',
+        ...userHeaders,
+      };
+      const openRouterBody: Record<string, any> = {
+        model: model || 'openai/tts-1',
+        input: cleanText,
+        voice: voice || 'alloy',
+        speed: Math.max(0.25, Math.min(4.0, Number(speed) || 1.0)),
+        response_format: 'mp3',
+      };
+      applyCustomParams(openRouterBody, customParams);
+
       const response = await fetch(openRouterUrl, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${activeKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://medigen.app',
-          'X-Title': 'MediGen Voice AI',
-        },
-        body: JSON.stringify({
-          model: model || 'openai/tts-1',
-          input: cleanText,
-          voice: voice || 'alloy',
-          speed: Math.max(0.25, Math.min(4.0, Number(speed) || 1.0)),
-          response_format: 'mp3',
-        }),
+        headers: openRouterHeaders,
+        body: JSON.stringify(openRouterBody),
       });
 
       if (!response.ok) {
@@ -418,19 +500,24 @@ export async function POST(req: NextRequest) {
       }
 
       const openAiUrl = endpoint || 'https://api.openai.com/v1/audio/speech';
+      const openAiHeaders: Record<string, string> = {
+        Authorization: `Bearer ${activeKey}`,
+        'Content-Type': 'application/json',
+        ...userHeaders,
+      };
+      const openAiBody: Record<string, any> = {
+        model: model || 'tts-1',
+        input: cleanText,
+        voice: voice || 'alloy',
+        speed: Math.max(0.25, Math.min(4.0, Number(speed) || 1.0)),
+        response_format: 'mp3',
+      };
+      applyCustomParams(openAiBody, customParams);
+
       const response = await fetch(openAiUrl, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${activeKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: model || 'tts-1',
-          input: cleanText,
-          voice: voice || 'alloy',
-          speed: Math.max(0.25, Math.min(4.0, Number(speed) || 1.0)),
-          response_format: 'mp3',
-        }),
+        headers: openAiHeaders,
+        body: JSON.stringify(openAiBody),
       });
 
       if (!response.ok) {
@@ -463,21 +550,25 @@ export async function POST(req: NextRequest) {
 
       const voiceId = voice || '21m00Tcm4TlvDq8ikWAM'; // Rachel default
       const elevenUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+      const elevenHeaders: Record<string, string> = {
+        'xi-api-key': activeKey,
+        'Content-Type': 'application/json',
+        ...userHeaders,
+      };
+      const elevenBody: Record<string, any> = {
+        text: cleanText,
+        model_id: model || 'eleven_multilingual_v2',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+        },
+      };
+      applyCustomParams(elevenBody, customParams);
 
       const response = await fetch(elevenUrl, {
         method: 'POST',
-        headers: {
-          'xi-api-key': activeKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text: cleanText,
-          model_id: model || 'eleven_multilingual_v2',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-          },
-        }),
+        headers: elevenHeaders,
+        body: JSON.stringify(elevenBody),
       });
 
       if (!response.ok) {
@@ -516,7 +607,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Build payload based on user's customFormat preference
-      let requestBody: any;
+      let requestBody: Record<string, any>;
       if (customFormat === 'json_base64') {
         requestBody = {
           text: cleanText,
@@ -534,6 +625,7 @@ export async function POST(req: NextRequest) {
           response_format: 'mp3',
         };
       }
+      applyCustomParams(requestBody, customParams);
 
       const response = await fetch(ttsUrl, {
         method: 'POST',

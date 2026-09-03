@@ -244,6 +244,54 @@ function normalizeCustomEndpoint(endpoint: string): string {
   return ep;
 }
 
+function parseCustomHeaders(headersStr?: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!headersStr || typeof headersStr !== 'string') return result;
+
+  const lines = headersStr.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx > 0) {
+      const key = trimmed.slice(0, colonIdx).trim();
+      const val = trimmed.slice(colonIdx + 1).trim();
+      if (key && val) {
+        result[key] = val;
+      }
+    }
+  }
+  return result;
+}
+
+function applyCustomParams(target: Record<string, any>, customParams?: string | Record<string, any>): void {
+  if (!customParams) return;
+  let parsed: Record<string, any> | null = null;
+  if (typeof customParams === 'string') {
+    const trimmed = customParams.trim();
+    if (!trimmed) return;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e: any) {
+      console.warn('Could not parse customParams JSON in stream route:', e.message);
+      return;
+    }
+  } else if (typeof customParams === 'object' && customParams !== null) {
+    parsed = customParams;
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    for (const [key, val] of Object.entries(parsed)) {
+      if (val === null || val === undefined) {
+        delete target[key];
+      } else {
+        target[key] = val;
+      }
+    }
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -273,7 +321,11 @@ export async function POST(req: NextRequest) {
       const isOpenAi = endpoint.toLowerCase().includes('api.openai.com');
       const modelName = (config.customModel || 'gpt-4o').toLowerCase();
 
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const userHeaders = parseCustomHeaders(config.customHeaders);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...userHeaders,
+      };
       const key = config.customApiKey || config.apiKey;
       if (key) {
         if (isAnthropic) {
@@ -334,6 +386,9 @@ export async function POST(req: NextRequest) {
           payload.reasoning_effort = 'medium';
         }
       }
+
+      // Merge user custom parameters/overrides into payload
+      applyCustomParams(payload, config.customParams);
 
       let upstreamRes = await fetch(endpoint, {
         method: 'POST',
@@ -581,6 +636,9 @@ export async function POST(req: NextRequest) {
               }
             }
           }
+
+          // Merge user custom parameters/overrides into Gemini genConfig
+          applyCustomParams(genConfig, config.customParams);
 
           let responseStream;
           try {

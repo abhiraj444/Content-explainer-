@@ -35,13 +35,14 @@ import { prepareImagesForAiPrompt } from '@/lib/image-compressor';
 import { useSettings } from '@/context/SettingsContext';
 import { ClinicalMarkdownRenderer } from './ClinicalMarkdownRenderer';
 import { AiStreamingRawLogBox } from './AiStreamingRawLogBox';
-import type { FollowUpThread } from '@/types';
+import type { FollowUpThread, AudioExplanationData } from '@/types';
 
-interface FollowUpChatProps {
+export interface FollowUpChatProps {
   proactiveQuestions?: string[];
   threads?: FollowUpThread[];
   onAskFollowUp: (question: string, images?: string[]) => Promise<void>;
   onStop?: () => void;
+  onUpdateThreads?: (threads: FollowUpThread[]) => void;
   isLoading?: boolean;
   inputPrompt?: string;
   streamingText?: string;
@@ -57,6 +58,7 @@ export function FollowUpChat({
   threads = [],
   onAskFollowUp,
   onStop,
+  onUpdateThreads,
   isLoading = false,
   inputPrompt = '',
   streamingText = '',
@@ -72,6 +74,7 @@ export function FollowUpChat({
   const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedScriptId, setCopiedScriptId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -84,6 +87,22 @@ export function FollowUpChat({
     enableReasoning,
     setEnableReasoning,
   } = useSettings();
+
+  const handleAudioGenerated = (threadId: string, audioData: AudioExplanationData) => {
+    const updated = threads.map((t) => (t.id === threadId ? { ...t, audioExplanation: audioData } : t));
+    onUpdateThreads?.(updated);
+    toast({
+      title: 'Voice Briefing Saved',
+      description: 'Audio explanation saved to consultation history.',
+    });
+  };
+
+  const handleCopyScript = (scriptText: string, id: string) => {
+    navigator.clipboard.writeText(scriptText);
+    setCopiedScriptId(id);
+    toast({ title: 'Script Copied', description: 'Spoken transcript copied to clipboard.' });
+    setTimeout(() => setCopiedScriptId(null), 2000);
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -352,10 +371,15 @@ export function FollowUpChat({
                         <span className="text-xs font-bold text-primary">
                           Clinical Synthesis &amp; Management Rationale
                         </span>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
                           <SpeechSynthesisButton
-                            size="icon"
-                            className="h-7 w-7"
+                            size="sm"
+                            variant={thread.audioExplanation ? 'secondary' : 'outline'}
+                            showLabel={true}
+                            label={thread.audioExplanation ? 'Replay Voice' : 'Voice Briefing'}
+                            className="h-7 text-[11px] px-2.5 font-medium rounded-lg"
+                            initialAudio={thread.audioExplanation}
+                            onAudioGenerated={(audioData) => handleAudioGenerated(thread.id, audioData)}
                             voiceContext={{
                               type: 'clinical_qa',
                               title: thread.question,
@@ -366,7 +390,7 @@ export function FollowUpChat({
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground rounded-lg"
                             onClick={() => handleCopy(thread.answer, thread.id)}
                             aria-label="Copy response"
                           >
@@ -380,6 +404,53 @@ export function FollowUpChat({
                       </div>
 
                       <ClinicalMarkdownRenderer content={thread.answer} />
+
+                      {/* Saved Audio Briefing Transcript Drawer */}
+                      {thread.audioExplanation?.script && (
+                        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-2 mt-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                              <Sparkles className="h-3.5 w-3.5 text-primary" />
+                              <span>Audio Briefing Saved</span>
+                              {thread.audioExplanation.voice && (
+                                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary uppercase">
+                                  {thread.audioExplanation.voice} ({thread.audioExplanation.provider || 'tts'})
+                                </span>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 text-[10px] gap-1 px-2 text-primary hover:text-primary hover:bg-primary/10"
+                              onClick={() => handleCopyScript(thread.audioExplanation!.script!, thread.id)}
+                            >
+                              {copiedScriptId === thread.id ? (
+                                <>
+                                  <Check className="h-3 w-3 text-emerald-500" />
+                                  <span>Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="h-3 w-3" />
+                                  <span>Copy Script</span>
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                          <Accordion type="single" collapsible className="w-full">
+                            <AccordionItem value="script" className="border-none">
+                              <AccordionTrigger className="py-0.5 text-[11px] font-medium text-muted-foreground hover:text-primary">
+                                <span>View Spoken Transcript</span>
+                              </AccordionTrigger>
+                              <AccordionContent>
+                                <p className="text-xs text-muted-foreground italic leading-relaxed pt-1.5 border-t border-primary/10">
+                                  "{thread.audioExplanation.script}"
+                                </p>
+                              </AccordionContent>
+                            </AccordionItem>
+                          </Accordion>
+                        </div>
+                      )}
 
                       {thread.reasoning && (
                         <Accordion type="single" collapsible className="w-full pt-1">

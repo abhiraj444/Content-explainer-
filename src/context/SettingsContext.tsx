@@ -187,6 +187,10 @@ interface SettingsContextType {
     setCustomApiKey: (key: string, providerId?: string) => void;
     customModel: string;
     setCustomModel: (model: string) => void;
+    customHeaders: string;
+    setCustomHeaders: (headers: string) => void;
+    customParams: string;
+    setCustomParams: (params: string) => void;
 
     // Multi-provider key vault
     providerKeys: Record<string, string>;
@@ -227,6 +231,8 @@ interface SettingsContextType {
     setTtsCustomFormat: (format: CustomTtsFormat) => void;
     ttsCustomHeaders: string;
     setTtsCustomHeaders: (headers: string) => void;
+    ttsCustomParams: string;
+    setTtsCustomParams: (params: string) => void;
     ttsSarvamLanguage: string;
     setTtsSarvamLanguage: (lang: string) => void;
     ttsAudioPreference: TtsAudioPreference;
@@ -285,6 +291,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const [customEndpoint, setCustomEndpointInternal] = useState<string>('');
     const [customApiKey, setCustomApiKeyInternal] = useState<string>('');
     const [customModel, setCustomModelInternal] = useState<string>('gpt-4o');
+    const [customHeaders, setCustomHeadersInternal] = useState<string>('');
+    const [customParams, setCustomParamsInternal] = useState<string>('');
 
     // Multi-Provider Key Vaults (mapping providerId -> key)
     const [providerKeys, setProviderKeys] = useState<Record<string, string>>({});
@@ -306,6 +314,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const [ttsSpeed, setTtsSpeedInternal] = useState<number>(1.0);
     const [ttsCustomFormat, setTtsCustomFormatInternal] = useState<CustomTtsFormat>('auto');
     const [ttsCustomHeaders, setTtsCustomHeadersInternal] = useState<string>('');
+    const [ttsCustomParams, setTtsCustomParamsInternal] = useState<string>('');
     const [ttsSarvamLanguage, setTtsSarvamLanguageInternal] = useState<string>('en-IN');
     const [ttsAudioPreference, setTtsAudioPreferenceInternal] = useState<TtsAudioPreference>(DEFAULT_TTS_AUDIO_PREFERENCE);
 
@@ -407,6 +416,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             setCustomModelInternal(savedCustomModel);
         }
 
+        const savedCustomHeaders = localStorage.getItem('app_custom_headers');
+        if (savedCustomHeaders) {
+            setCustomHeadersInternal(savedCustomHeaders);
+        }
+
+        const savedCustomParams = localStorage.getItem('app_custom_params');
+        if (savedCustomParams) {
+            setCustomParamsInternal(savedCustomParams);
+        }
+
         const pid = detectProviderIdFromEndpoint(savedEndpoint || '', savedCustomModel || '');
         const activeCustomKey = loadedProviderKeys[pid] || localStorage.getItem(`app_provider_key_${pid}`) || localStorage.getItem('app_custom_api_key') || '';
         setCustomApiKeyInternal(activeCustomKey);
@@ -481,8 +500,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         const savedCustomFormat = localStorage.getItem('app_tts_custom_format') as CustomTtsFormat | null;
         if (savedCustomFormat) setTtsCustomFormatInternal(savedCustomFormat);
 
-        const savedCustomHeaders = localStorage.getItem('app_tts_custom_headers');
-        if (savedCustomHeaders) setTtsCustomHeadersInternal(savedCustomHeaders);
+        const savedTtsCustomHeaders = localStorage.getItem('app_tts_custom_headers');
+        if (savedTtsCustomHeaders) setTtsCustomHeadersInternal(savedTtsCustomHeaders);
+
+        const savedTtsCustomParams = localStorage.getItem('app_tts_custom_params');
+        if (savedTtsCustomParams) setTtsCustomParamsInternal(savedTtsCustomParams);
 
         const savedSarvamLang = localStorage.getItem('app_tts_sarvam_language');
         if (savedSarvamLang) setTtsSarvamLanguageInternal(savedSarvamLang);
@@ -712,6 +734,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setCustomModelInternal(model);
     };
 
+    const setCustomHeaders = (headers: string) => {
+        localStorage.setItem('app_custom_headers', headers);
+        setCustomHeadersInternal(headers);
+    };
+
+    const setCustomParams = (params: string) => {
+        localStorage.setItem('app_custom_params', params);
+        setCustomParamsInternal(params);
+    };
+
     const setSttProvider = (provider: SttProvider, autoLoadKey: boolean = true) => {
         localStorage.setItem('app_stt_provider', provider);
         setSttProviderInternal(provider);
@@ -876,6 +908,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTtsCustomHeadersInternal(headers);
     };
 
+    const setTtsCustomParams = (params: string) => {
+        localStorage.setItem('app_tts_custom_params', params);
+        setTtsCustomParamsInternal(params);
+    };
+
     const setTtsSarvamLanguage = (lang: string) => {
         localStorage.setItem('app_tts_sarvam_language', lang);
         setTtsSarvamLanguageInternal(lang);
@@ -1035,9 +1072,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         speed: ttsSpeed || 1.0,
         customFormat: ttsCustomFormat,
         customHeaders: ttsCustomHeaders,
+        customParams: ttsCustomParams,
         sarvamLanguage: ttsSarvamLanguage,
         audioPreference: ttsAudioPreference,
-    }), [ttsProvider, ttsApiKey, ttsEndpoint, ttsModel, ttsVoice, ttsSpeed, ttsCustomFormat, ttsCustomHeaders, ttsSarvamLanguage, ttsAudioPreference]);
+    }), [ttsProvider, ttsApiKey, ttsEndpoint, ttsModel, ttsVoice, ttsSpeed, ttsCustomFormat, ttsCustomHeaders, ttsCustomParams, ttsSarvamLanguage, ttsAudioPreference]);
 
     const aiConfig: AiConfig = useMemo(() => ({
         provider: aiProvider,
@@ -1047,11 +1085,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         customEndpoint,
         customApiKey,
         customModel,
+        customHeaders,
+        customParams,
         enableReasoning,
         thinkingBudget: enableReasoning ? 2048 : 0,
         sttConfig,
         ttsSettings,
-    }), [aiProvider, customApiKey, geminiApiKey, geminiModel, customEndpoint, customModel, enableReasoning, sttConfig, ttsSettings]);
+    }), [aiProvider, customApiKey, geminiApiKey, geminiModel, customEndpoint, customModel, customHeaders, customParams, enableReasoning, sttConfig, ttsSettings]);
 
     return (
         <SettingsContext.Provider
@@ -1070,6 +1110,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 setCustomApiKey,
                 customModel,
                 setCustomModel,
+                customHeaders,
+                setCustomHeaders,
+                customParams,
+                setCustomParams,
                 providerKeys,
                 setProviderKey,
                 getSavedKeyForProvider,
@@ -1104,6 +1148,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 setTtsCustomFormat,
                 ttsCustomHeaders,
                 setTtsCustomHeaders,
+                ttsCustomParams,
+                setTtsCustomParams,
                 ttsSarvamLanguage,
                 setTtsSarvamLanguage,
                 ttsAudioPreference,

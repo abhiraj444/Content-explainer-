@@ -215,6 +215,54 @@ function normalizeCustomEndpoint(endpoint: string): string {
   return ep;
 }
 
+function parseCustomHeaders(headersStr?: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!headersStr || typeof headersStr !== 'string') return result;
+
+  const lines = headersStr.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx > 0) {
+      const key = trimmed.slice(0, colonIdx).trim();
+      const val = trimmed.slice(colonIdx + 1).trim();
+      if (key && val) {
+        result[key] = val;
+      }
+    }
+  }
+  return result;
+}
+
+function applyCustomParams(target: Record<string, any>, customParams?: string | Record<string, any>): void {
+  if (!customParams) return;
+  let parsed: Record<string, any> | null = null;
+  if (typeof customParams === 'string') {
+    const trimmed = customParams.trim();
+    if (!trimmed) return;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e: any) {
+      console.warn('Could not parse customParams JSON in generate route:', e.message);
+      return;
+    }
+  } else if (typeof customParams === 'object' && customParams !== null) {
+    parsed = customParams;
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    for (const [key, val] of Object.entries(parsed)) {
+      if (val === null || val === undefined) {
+        delete target[key];
+      } else {
+        target[key] = val;
+      }
+    }
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -236,8 +284,10 @@ export async function POST(req: NextRequest) {
 
       const isAnthropic = endpoint.includes('api.anthropic.com');
       const key = config.customApiKey || config.apiKey;
+      const userHeaders = parseCustomHeaders(config.customHeaders);
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        ...userHeaders,
       };
       if (key) {
         if (isAnthropic) {
@@ -343,6 +393,9 @@ export async function POST(req: NextRequest) {
           payload.reasoning_effort = 'medium';
         }
       }
+
+      // Merge user custom parameters/overrides into payload
+      applyCustomParams(payload, config.customParams);
 
       try {
         let res = await fetch(endpoint, {
@@ -542,23 +595,42 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      let responseStream;
-      try {
-        responseStream = await ai.models.generateContentStream({
-          model: requestedModel,
-          contents,
-          config: Object.keys(genConfig).length > 0 ? genConfig : undefined,
-        });
-      } catch (initialErr: any) {
-        const errMsg = (initialErr?.message || '').toLowerCase();
-        if (genConfig.thinkingConfig && (errMsg.includes('thinking') || errMsg.includes('unsupported') || errMsg.includes('invalid_argument') || errMsg.includes('400'))) {
+      // Merge user custom parameters/overrides into Gemini genConfig
+      applyCustomParams(genConfig, config.customParams);
+
+      let responseStream: any;
+      let lastStreamErr: any = null;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          if (attempt > 0) {
+            await sleep(800 * Math.pow(2, attempt - 1));
+          }
           responseStream = await ai.models.generateContentStream({
             model: requestedModel,
             contents,
-            config: undefined,
+            config: Object.keys(genConfig).length > 0 ? genConfig : undefined,
           });
-        } else {
-          throw initialErr;
+          break;
+        } catch (initialErr: any) {
+          lastStreamErr = initialErr;
+          const errMsg = (initialErr?.message || '').toLowerCase();
+          if (genConfig.thinkingConfig && (errMsg.includes('thinking') || errMsg.includes('unsupported') || errMsg.includes('invalid_argument') || errMsg.includes('400'))) {
+            try {
+              responseStream = await ai.models.generateContentStream({
+                model: requestedModel,
+                contents,
+                config: undefined,
+              });
+              break;
+            } catch (fallbackErr) {
+              lastStreamErr = fallbackErr;
+            }
+          }
+          const isRetryable = errMsg.includes('429') || errMsg.includes('resource_exhausted') || errMsg.includes('503') || errMsg.includes('overloaded');
+          if (!isRetryable || attempt === 2) {
+            throw lastStreamErr;
+          }
         }
       }
 

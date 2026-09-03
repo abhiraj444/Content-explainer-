@@ -21,7 +21,8 @@ import { useSettings } from '@/context/SettingsContext';
 import { ClientSideAiService } from '@/lib/ClientSideAiService';
 import { AudioPlayerService, type AudioPlaybackController } from '@/lib/AudioPlayerService';
 import { useToast } from '@/hooks/use-toast';
-import type { VoiceExplanationContext, VoiceContextType } from '@/types';
+import { LocalDataService } from '@/lib/LocalDataService';
+import type { VoiceExplanationContext, VoiceContextType, AudioExplanationData } from '@/types';
 import { cn } from '@/lib/utils';
 
 // In-memory audio session cache so repeating the same voice clip is instant
@@ -43,6 +44,8 @@ export interface SpeechSynthesisButtonProps {
     context?: string;
   };
   generatePedagogicalScript?: boolean;
+  initialAudio?: AudioExplanationData;
+  onAudioGenerated?: (audioData: AudioExplanationData) => void;
 }
 
 export type VoiceSynthesisStep = 'idle' | 'generating_script' | 'synthesizing_voice' | 'playing' | 'paused';
@@ -59,6 +62,8 @@ export function SpeechSynthesisButton({
   voiceContext,
   pedagogicalContext,
   generatePedagogicalScript = true,
+  initialAudio,
+  onAudioGenerated,
 }: SpeechSynthesisButtonProps) {
   const { toast } = useToast();
   const { ttsSettings, aiConfig, language, ttsAudioPreference } = useSettings();
@@ -73,7 +78,7 @@ export function SpeechSynthesisButton({
 
   // Two-Stage Voice Architecture state
   const [stage, setStage] = useState<VoiceSynthesisStep>('idle');
-  const [generatedScript, setGeneratedScript] = useState<string | null>(null);
+  const [generatedScript, setGeneratedScript] = useState<string | null>(initialAudio?.script || null);
   const [showScriptModal, setShowScriptModal] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
 
@@ -101,9 +106,6 @@ export function SpeechSynthesisButton({
 
   // Compute effective text to speak or explain
   const effectiveText = voiceContext?.mainContent || text || '';
-  if (!effectiveText && !voiceContext) {
-    return null;
-  }
 
   // Derive standardized VoiceExplanationContext and tone
   const effectiveAudioPref = voiceContext?.audioPreference || ttsSettings?.audioPreference || ttsAudioPreference || (language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
@@ -118,6 +120,25 @@ export function SpeechSynthesisButton({
   };
 
   const cacheKey = `${activeProvider}_${activeVoice}_${activeSpeed}_${effectiveAudioPref}_${resolvedContext.type}_${resolvedContext.title}_${effectiveText.slice(0, 80)}`;
+
+  // Populate initial audio if provided
+  useEffect(() => {
+    if (initialAudio?.audioBase64 || initialAudio?.audioDataUrl) {
+      const data = initialAudio.audioBase64 || initialAudio.audioDataUrl || '';
+      audioSessionCache.set(cacheKey, {
+        audioBase64: data,
+        mimeType: initialAudio.mimeType || 'audio/wav',
+        script: initialAudio.script || effectiveText,
+      });
+      if (initialAudio.script) {
+        setGeneratedScript(initialAudio.script);
+      }
+    }
+  }, [initialAudio, cacheKey, effectiveText]);
+
+  if (!effectiveText && !voiceContext && !initialAudio) {
+    return null;
+  }
 
   const isCurrentActive = stage === 'playing' || isBrowserSpeaking;
   const isCurrentPaused = stage === 'paused' || isBrowserPaused;
@@ -141,8 +162,20 @@ export function SpeechSynthesisButton({
 
   // Two-Stage Generation and Playback Process
   const handleStartTwoStageSynthesis = async () => {
-    // 1. Check local session cache for instant replay
-    const cached = audioSessionCache.get(cacheKey);
+    // 1. Check local session cache or Dexie persistent store for instant replay
+    let cached = audioSessionCache.get(cacheKey);
+    if (!cached) {
+      const persisted = await LocalDataService.getAudioCache(cacheKey);
+      if (persisted) {
+        cached = {
+          audioBase64: persisted.audioBase64,
+          mimeType: persisted.mimeType,
+          script: persisted.script,
+        };
+        audioSessionCache.set(cacheKey, cached);
+      }
+    }
+
     if (cached) {
       setGeneratedScript(cached.script);
       try {
@@ -153,8 +186,14 @@ export function SpeechSynthesisButton({
           {
             onPlay: () => setStage('playing'),
             onPause: () => setStage('paused'),
-            onEnded: () => setStage('idle'),
-            onError: () => setStage('idle'),
+            onEnded: () => {
+              setStage('idle');
+              playbackControllerRef.current = null;
+            },
+            onError: () => {
+              setStage('idle');
+              playbackControllerRef.current = null;
+            },
           }
         );
         playbackControllerRef.current = controller;
@@ -229,13 +268,40 @@ export function SpeechSynthesisButton({
 
       const audioData = ttsResult.audioBase64 || ttsResult.audioDataUrl;
       const mimeType = ttsResult.mimeType || 'audio/wav';
+      const audioUrl = ttsResult.audioDataUrl || `data:${mimeType};base64,${audioData}`;
 
-      // Cache for instant future replays
+      // Cache in memory for instant future replays
       audioSessionCache.set(cacheKey, {
         audioBase64: audioData,
         mimeType,
         script: scriptToSpeak || effectiveText,
       });
+
+      // Persist in IndexedDB Dexie database
+      await LocalDataService.saveAudioCache({
+        id: cacheKey,
+        audioBase64: audioData,
+        audioDataUrl: audioUrl,
+        mimeType,
+        script: scriptToSpeak || effectiveText,
+        voice: activeVoice,
+        provider: activeProvider,
+        audioPreference: effectiveAudioPref,
+      });
+
+      // Notify parent component so it can save to case history
+      if (onAudioGenerated) {
+        onAudioGenerated({
+          audioDataUrl: audioUrl,
+          audioBase64: audioData,
+          mimeType,
+          script: scriptToSpeak || effectiveText,
+          voice: activeVoice,
+          provider: activeProvider,
+          audioPreference: effectiveAudioPref,
+          timestamp: Date.now(),
+        });
+      }
 
       // STAGE 3: Audio Playback via Universal Audio Player
       const playback = await AudioPlayerService.playBase64(
@@ -267,8 +333,8 @@ export function SpeechSynthesisButton({
       }
       console.warn('Two-stage voice synthesis encountered issue, switching to browser speech:', err);
       toast({
-        title: 'TTS Service Notice',
-        description: `${err?.message || 'TTS request failed'}. Speaking via browser voice engine.`,
+        title: 'TTS Notice',
+        description: `${err?.message || 'TTS request failed'}. Speaking via browser voice.`,
       });
       toggleBrowserSpeak(generatedScript || effectiveText);
       setStage('idle');

@@ -35,9 +35,22 @@ export interface LocalUser {
   passwordHash: string;
 }
 
+export interface LocalAudioCacheItem {
+  id: string; // cacheKey (based on context/text/voice)
+  audioBase64: string;
+  audioDataUrl?: string;
+  mimeType: string;
+  script: string;
+  voice: string;
+  provider: string;
+  audioPreference?: string;
+  createdAt: number;
+}
+
 class MediGenDatabase extends Dexie {
   cases!: Table<LocalCase>;
   users!: Table<LocalUser>;
+  audioCache!: Table<LocalAudioCacheItem>;
 
   constructor() {
     super('MediGenDB');
@@ -45,12 +58,49 @@ class MediGenDatabase extends Dexie {
       cases: 'id, userId, type, createdAt',
       users: 'id, email'
     });
+    this.version(2).stores({
+      cases: 'id, userId, type, createdAt',
+      users: 'id, email',
+      audioCache: 'id, createdAt'
+    });
   }
 }
 
 export const db = new MediGenDatabase();
 
 export const LocalDataService = {
+  // Audio Cache Persistence (Saves generated voice explanations across sessions)
+  async saveAudioCache(item: Omit<LocalAudioCacheItem, 'createdAt'> & { createdAt?: number }) {
+    try {
+      const data: LocalAudioCacheItem = {
+        ...item,
+        createdAt: item.createdAt || Date.now(),
+      };
+      await db.audioCache.put(data);
+      return data;
+    } catch (err) {
+      console.warn('Failed to save audio to Dexie cache:', err);
+      return null;
+    }
+  },
+
+  async getAudioCache(id: string): Promise<LocalAudioCacheItem | undefined> {
+    try {
+      return await db.audioCache.get(id);
+    } catch (err) {
+      console.warn('Failed to get audio from Dexie cache:', err);
+      return undefined;
+    }
+  },
+
+  async deleteAudioCache(id: string) {
+    try {
+      await db.audioCache.delete(id);
+    } catch (err) {
+      console.warn('Failed to delete audio from Dexie cache:', err);
+    }
+  },
+
   // Case Management
   async saveCase(caseData: Partial<LocalCase>) {
     const id = caseData.id || uuidv4();
