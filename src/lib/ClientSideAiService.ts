@@ -3049,6 +3049,126 @@ Begin spoken transcript now:`;
         const data = await response.json();
         return data;
     },
+    synthesizeSpeechStream: async (
+        config: AiSettingsConfig,
+        params: {
+            text: string;
+            provider?: string;
+            voice?: string;
+            speed?: number;
+            endpoint?: string;
+            apiKey?: string;
+            model?: string;
+            language?: string;
+            audioPreference?: 'english_indian' | 'hinglish_indian' | 'standard';
+            signal?: AbortSignal;
+            customParams?: any;
+        },
+        callbacks: {
+            onInit?: (data: { totalChunks: number; chunks: { index: number; text: string }[] }) => void;
+            onChunk?: (chunk: {
+                index: number;
+                totalChunks: number;
+                text: string;
+                audioBase64: string;
+                audioDataUrl: string;
+                mimeType: string;
+                voice?: string;
+                latencyMs?: number;
+                isLast?: boolean;
+            }) => void;
+            onChunkError?: (errorData: { index: number; totalChunks: number; text: string; error: string }) => void;
+            onDone?: (data: { totalChunks: number; totalDurationMs: number }) => void;
+            onError?: (error: any) => void;
+        } = {}
+    ): Promise<void> => {
+        const ttsSettings = config.ttsSettings;
+
+        const effectiveProvider = params.provider || ttsSettings?.provider || DEFAULT_TTS_PROVIDER;
+        const effectiveVoice = params.voice || ttsSettings?.voice || DEFAULT_TTS_VOICE;
+        const effectiveSpeed = params.speed || ttsSettings?.speed || 1.0;
+        const effectiveEndpoint = params.endpoint || ttsSettings?.endpoint;
+        const effectiveModel = params.model || ttsSettings?.model;
+        const effectiveAudioPreference = params.audioPreference || ttsSettings?.audioPreference || (params.language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
+        const effectiveKey = params.apiKey || ttsSettings?.apiKey || undefined;
+
+        const response = await fetch('/api/ai/tts/stream', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                text: params.text,
+                provider: effectiveProvider,
+                voice: effectiveVoice,
+                speed: effectiveSpeed,
+                endpoint: effectiveEndpoint,
+                apiKey: effectiveKey,
+                model: effectiveModel,
+                language: params.language || (effectiveAudioPreference === 'hinglish_indian' ? 'hinglish' : 'english'),
+                audioPreference: effectiveAudioPreference,
+                customFormat: ttsSettings?.customFormat,
+                customHeaders: ttsSettings?.customHeaders,
+                customParams: (params as any).customParams || ttsSettings?.customParams,
+                sarvamLanguage: ttsSettings?.sarvamLanguage,
+            }),
+            signal: params.signal,
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => null);
+            throw new Error(errData?.error || `Streaming TTS request failed with status ${response.status}`);
+        }
+
+        if (!response.body) {
+            throw new Error('ReadableStream not supported or empty response from TTS stream.');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed || !trimmed.startsWith('data:')) continue;
+                    const jsonStr = trimmed.slice(5).trim();
+                    if (!jsonStr) continue;
+
+                    try {
+                        const event = JSON.parse(jsonStr);
+                        if (event.type === 'init') {
+                            callbacks.onInit?.(event);
+                        } else if (event.type === 'chunk') {
+                            callbacks.onChunk?.(event);
+                        } else if (event.type === 'chunk_error') {
+                            callbacks.onChunkError?.(event);
+                        } else if (event.type === 'done') {
+                            callbacks.onDone?.(event);
+                        } else if (event.type === 'error') {
+                            throw new Error(event.error || 'Server stream error');
+                        }
+                    } catch (parseErr) {
+                        console.warn('Failed to parse SSE line:', parseErr, jsonStr);
+                    }
+                }
+            }
+        } catch (streamErr: any) {
+            if (params.signal?.aborted) return;
+            callbacks.onError?.(streamErr);
+            throw streamErr;
+        } finally {
+            reader.releaseLock();
+        }
+    },
     isAbortError,
     formatModelDisplayName,
     resolveAiConfig,

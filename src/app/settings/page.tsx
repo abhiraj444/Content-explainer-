@@ -65,6 +65,7 @@ import {
 } from 'lucide-react';
 
 import { ModeLanguageSelector } from '@/components/ModeLanguageSelector';
+import { ApiParameterTestStudio } from '@/components/ApiParameterTestStudio';
 
 const GEMINI_MODEL_PRESETS = [
   {
@@ -295,6 +296,16 @@ export default function SettingsPage() {
     setTtsCustomFormat,
     ttsCustomHeaders,
     setTtsCustomHeaders,
+    ttsCustomParams,
+    setTtsCustomParams,
+    customHeaders,
+    setCustomHeaders,
+    customParams,
+    setCustomParams,
+    sttCustomHeaders,
+    setSttCustomHeaders,
+    sttCustomParams,
+    setSttCustomParams,
     ttsSarvamLanguage,
     setTtsSarvamLanguage,
     ttsProviderKeys,
@@ -331,6 +342,8 @@ export default function SettingsPage() {
   const [localCustomEndpoint, setLocalCustomEndpoint] = useState(customEndpoint);
   const [localCustomKey, setLocalCustomKey] = useState(customApiKey);
   const [localCustomModel, setLocalCustomModel] = useState(customModel || 'gpt-4o');
+  const [localCustomHeaders, setLocalCustomHeaders] = useState<string>(customHeaders || '');
+  const [localCustomParams, setLocalCustomParams] = useState<string>(customParams || '');
 
   // Multi-provider key vault local copy
   const [vaultKeys, setVaultKeys] = useState<Record<string, string>>(providerKeys || {});
@@ -342,6 +355,8 @@ export default function SettingsPage() {
   const [localSttApiKey, setLocalSttApiKey] = useState(sttApiKey || '');
   const [localSttEndpoint, setLocalSttEndpoint] = useState(sttEndpoint || 'https://api.groq.com/openai/v1');
   const [localSttModel, setLocalSttModel] = useState(sttModel || DEFAULT_STT_MODEL);
+  const [localSttCustomHeaders, setLocalSttCustomHeaders] = useState<string>(sttCustomHeaders || '');
+  const [localSttCustomParams, setLocalSttCustomParams] = useState<string>(sttCustomParams || '');
   const [showSttKey, setShowSttKey] = useState(false);
 
   // TTS (Text-to-Speech Voice Synthesis) Local State
@@ -353,6 +368,7 @@ export default function SettingsPage() {
   const [localTtsSpeed, setLocalTtsSpeed] = useState<number>(ttsSpeed || 1.0);
   const [localTtsCustomFormat, setLocalTtsCustomFormat] = useState<CustomTtsFormat>(ttsCustomFormat || 'auto');
   const [localTtsCustomHeaders, setLocalTtsCustomHeaders] = useState<string>(ttsCustomHeaders || '');
+  const [localTtsCustomParams, setLocalTtsCustomParams] = useState<string>(ttsCustomParams || '');
   const [localTtsSarvamLanguage, setLocalTtsSarvamLanguage] = useState<string>(ttsSarvamLanguage || 'en-IN');
   const [localTtsAudioPreference, setLocalTtsAudioPreference] = useState<TtsAudioPreference>(ttsAudioPreference || 'english_indian');
   const [localTtsTestText, setLocalTtsTestText] = useState<string>(
@@ -417,6 +433,8 @@ export default function SettingsPage() {
       setLocalCustomEndpoint(customEndpoint);
       setLocalCustomKey(customApiKey);
       setLocalCustomModel(customModel || 'gpt-4o');
+      setLocalCustomHeaders(customHeaders || '');
+      setLocalCustomParams(customParams || '');
       setVaultKeys((prev) => ({ ...prev, ...providerKeys }));
       setSttVaultKeys((prev) => ({ ...prev, ...sttProviderKeys }));
       setTtsVaultKeys((prev) => ({ ...prev, ...ttsProviderKeys }));
@@ -424,6 +442,8 @@ export default function SettingsPage() {
       setLocalSttApiKey(sttApiKey);
       setLocalSttEndpoint(sttEndpoint);
       setLocalSttModel(sttModel || DEFAULT_STT_MODEL);
+      setLocalSttCustomHeaders(sttCustomHeaders || '');
+      setLocalSttCustomParams(sttCustomParams || '');
       setLocalTtsProvider(ttsProvider || DEFAULT_TTS_PROVIDER);
       setLocalTtsApiKey(ttsApiKey || '');
       setLocalTtsEndpoint(ttsEndpoint || 'https://generativelanguage.googleapis.com');
@@ -432,6 +452,7 @@ export default function SettingsPage() {
       setLocalTtsSpeed(ttsSpeed || 1.0);
       setLocalTtsCustomFormat(ttsCustomFormat || 'auto');
       setLocalTtsCustomHeaders(ttsCustomHeaders || '');
+      setLocalTtsCustomParams(ttsCustomParams || '');
       setLocalTtsSarvamLanguage(ttsSarvamLanguage || 'en-IN');
     }
   }, [
@@ -441,6 +462,8 @@ export default function SettingsPage() {
     customEndpoint,
     customApiKey,
     customModel,
+    customHeaders,
+    customParams,
     providerKeys,
     sttProviderKeys,
     ttsProviderKeys,
@@ -448,6 +471,8 @@ export default function SettingsPage() {
     sttApiKey,
     sttEndpoint,
     sttModel,
+    sttCustomHeaders,
+    sttCustomParams,
     ttsProvider,
     ttsApiKey,
     ttsEndpoint,
@@ -456,6 +481,7 @@ export default function SettingsPage() {
     ttsSpeed,
     ttsCustomFormat,
     ttsCustomHeaders,
+    ttsCustomParams,
     ttsSarvamLanguage,
   ]);
 
@@ -759,6 +785,8 @@ export default function SettingsPage() {
       if (!localTtsSarvamLanguage) setLocalTtsSarvamLanguage('en-IN');
     } else if (newPid === 'custom') {
       setLocalTtsCustomFormat('auto');
+    } else {
+      setLocalTtsCustomFormat('json_base64');
     }
 
     // 3. Load saved TTS key for this provider (Strict key isolation: isolated from general LLM keys)
@@ -885,12 +913,16 @@ export default function SettingsPage() {
     setCustomEndpoint(localCustomEndpoint.trim(), false);
     setCustomModel(localCustomModel.trim() || 'gpt-4o');
     setCustomApiKey(localCustomKey.trim(), targetCustomPid);
+    setCustomHeaders(localCustomHeaders);
+    setCustomParams(localCustomParams);
 
     // 3. Save STT settings and vault
     setSttProvider(localSttProvider, false);
     setSttApiKey(localSttApiKey.trim(), localSttProvider);
     setSttEndpoint(localSttEndpoint.trim());
     setSttModel(localSttModel.trim() || DEFAULT_STT_MODEL);
+    setSttCustomHeaders(localSttCustomHeaders);
+    setSttCustomParams(localSttCustomParams);
 
     const completeSttVault = {
       ...sttVaultKeys,
@@ -907,6 +939,7 @@ export default function SettingsPage() {
     setTtsSpeed(localTtsSpeed || 1.0);
     setTtsCustomFormat(localTtsCustomFormat);
     setTtsCustomHeaders(localTtsCustomHeaders);
+    setTtsCustomParams(localTtsCustomParams);
     setTtsSarvamLanguage(localTtsSarvamLanguage);
     setTtsAudioPreference(localTtsAudioPreference);
 
@@ -1453,6 +1486,43 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+
+            {/* Interactive Parameter Inspection, Custom Headers, and Test Studio */}
+            <div className="pt-2">
+              <ApiParameterTestStudio
+                mode="llm"
+                providerId={provider === 'gemini' ? 'gemini' : activeCustomProviderId || 'custom'}
+                providerName={provider === 'gemini' ? 'Google Gemini' : KNOWN_AI_PROVIDERS.find((p) => p.id === activeCustomProviderId)?.name || 'Custom LLM'}
+                endpoint={provider === 'gemini' ? 'https://generativelanguage.googleapis.com' : localCustomEndpoint}
+                model={provider === 'gemini' ? localGeminiModel : localCustomModel}
+                apiKey={provider === 'gemini' ? localGeminiKey : localCustomKey}
+                customHeaders={localCustomHeaders}
+                customParams={localCustomParams}
+                onSaveParameters={({ endpoint, model, customHeaders: newHeaders, customParams: newParams }) => {
+                  if (endpoint && provider !== 'gemini') {
+                    setLocalCustomEndpoint(endpoint);
+                    setCustomEndpoint(endpoint);
+                  }
+                  if (model) {
+                    if (provider === 'gemini') {
+                      setLocalGeminiModel(model);
+                      setGeminiModel(model);
+                    } else {
+                      setLocalCustomModel(model);
+                      setCustomModel(model);
+                    }
+                  }
+                  setLocalCustomHeaders(newHeaders);
+                  setCustomHeaders(newHeaders);
+                  setLocalCustomParams(newParams);
+                  setCustomParams(newParams);
+                  toast({
+                    title: 'LLM Parameters & Headers Saved',
+                    description: 'Custom parameters and headers saved to application state.',
+                  });
+                }}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1839,6 +1909,44 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+
+            {/* Interactive STT Parameter Inspection, Custom Headers, and Test Studio */}
+            <div className="pt-2">
+              <ApiParameterTestStudio
+                mode="stt"
+                providerId={localSttProvider}
+                providerName={
+                  localSttProvider === 'gemini'
+                    ? 'Gemini Audio'
+                    : localSttProvider === 'groq'
+                    ? 'Groq Whisper'
+                    : 'OpenAI Whisper'
+                }
+                endpoint={localSttEndpoint}
+                model={localSttModel}
+                apiKey={localSttProvider === 'gemini' ? localGeminiKey : localSttApiKey}
+                customHeaders={localSttCustomHeaders}
+                customParams={localSttCustomParams}
+                onSaveParameters={({ endpoint, model, customHeaders: newHeaders, customParams: newParams }) => {
+                  if (endpoint) {
+                    setLocalSttEndpoint(endpoint);
+                    setSttEndpoint(endpoint);
+                  }
+                  if (model) {
+                    setLocalSttModel(model);
+                    setSttModel(model);
+                  }
+                  setLocalSttCustomHeaders(newHeaders);
+                  setSttCustomHeaders(newHeaders);
+                  setLocalSttCustomParams(newParams);
+                  setSttCustomParams(newParams);
+                  toast({
+                    title: 'STT Parameters & Headers Saved',
+                    description: 'Custom STT parameters and headers saved to application state.',
+                  });
+                }}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -2497,6 +2605,68 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+
+            {/* Interactive TTS Parameter Inspection, Custom Headers, and Test Studio */}
+            <div className="pt-2">
+              <ApiParameterTestStudio
+                mode="tts"
+                providerId={localTtsProvider}
+                providerName={localTtsProvider.toUpperCase()}
+                endpoint={localTtsEndpoint}
+                model={localTtsModel}
+                apiKey={localTtsApiKey}
+                customHeaders={localTtsCustomHeaders}
+                customParams={localTtsCustomParams}
+                voice={localTtsVoice}
+                speed={localTtsSpeed}
+                customFormat={localTtsCustomFormat}
+                sarvamLanguage={localTtsSarvamLanguage}
+                defaultTestPrompt={localTtsTestText}
+                onSaveParameters={({
+                  endpoint,
+                  model,
+                  customHeaders: newHeaders,
+                  customParams: newParams,
+                  voice,
+                  speed,
+                  customFormat,
+                  sarvamLanguage,
+                }) => {
+                  if (endpoint) {
+                    setLocalTtsEndpoint(endpoint);
+                    setTtsEndpoint(endpoint);
+                  }
+                  if (model) {
+                    setLocalTtsModel(model);
+                    setTtsModel(model);
+                  }
+                  if (voice) {
+                    setLocalTtsVoice(voice);
+                    setTtsVoice(voice);
+                  }
+                  if (speed !== undefined) {
+                    setLocalTtsSpeed(speed);
+                    setTtsSpeed(speed);
+                  }
+                  if (customFormat) {
+                    setLocalTtsCustomFormat(customFormat as CustomTtsFormat);
+                    setTtsCustomFormat(customFormat as CustomTtsFormat);
+                  }
+                  if (sarvamLanguage) {
+                    setLocalTtsSarvamLanguage(sarvamLanguage);
+                    setTtsSarvamLanguage(sarvamLanguage);
+                  }
+                  setLocalTtsCustomHeaders(newHeaders);
+                  setTtsCustomHeaders(newHeaders);
+                  setLocalTtsCustomParams(newParams);
+                  setTtsCustomParams(newParams);
+                  toast({
+                    title: 'TTS Parameters & Headers Saved',
+                    description: 'Custom TTS parameters and headers saved to application state.',
+                  });
+                }}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>

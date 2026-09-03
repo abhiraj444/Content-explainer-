@@ -25,6 +25,136 @@ export interface AudioPlaybackCallbacks {
   onError?: (error: any) => void;
 }
 
+export interface StreamAudioChunk {
+  index: number;
+  totalChunks?: number;
+  text: string;
+  audioBase64?: string;
+  audioDataUrl?: string;
+  blob?: Blob;
+  mimeType?: string;
+  isLast?: boolean;
+  latencyMs?: number;
+  status?: 'pending' | 'synthesizing' | 'ready' | 'playing' | 'played' | 'error';
+}
+
+export interface StreamingAudioPlaybackCallbacks {
+  onStart?: () => void;
+  onChunkStart?: (chunk: StreamAudioChunk) => void;
+  onChunkLoaded?: (chunk: StreamAudioChunk) => void;
+  onChunkEnded?: (chunk: StreamAudioChunk) => void;
+  onProgress?: (progress: {
+    currentChunkIndex: number;
+    totalChunks: number;
+    loadedChunks: number;
+    activeText: string;
+    allChunks: StreamAudioChunk[];
+    isBuffering: boolean;
+  }) => void;
+  onBufferingChange?: (isBuffering: boolean) => void;
+  onChunkChange?: (chunkIndex: number, total: number) => void;
+  onTimeUpdate?: (currentTime: number, totalDuration: number) => void;
+  onPause?: () => void;
+  onResume?: () => void;
+  onEnded?: (completedChunks: StreamAudioChunk[]) => void;
+  onError?: (error: any) => void;
+}
+
+export interface StreamingAudioController extends AudioPlaybackController {
+  feedChunk: (chunkOrBase64: StreamAudioChunk | string, mimeType?: string, text?: string) => void;
+  markStreamComplete: (totalChunks?: number) => void;
+  skipCurrentChunk: () => void;
+  getCurrentChunk: () => StreamAudioChunk | null;
+  getAllChunks: () => StreamAudioChunk[];
+}
+
+/**
+ * Intelligent Text Chunker for Speech Synthesis
+ * Breaks text into natural spoken phrases & complete sentences (averaging 60-140 chars)
+ * respecting clinical abbreviations (Dr., mg., ml., vs., tab., cap., i.e., e.g.).
+ */
+export function splitTextIntoSpeechChunks(text: string, targetMaxChars = 140): string[] {
+  if (!text) return [];
+  const clean = text
+    .replace(/[*#`_~\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (clean.length <= targetMaxChars) {
+    return [clean];
+  }
+
+  // Regex to match sentence terminators (. ! ? ; or newline)
+  // Protects abbreviations like Dr., Mr., vs., e.g., i.e., tab., cap., mg., mL.
+  const sentences: string[] = [];
+  const rawParts = clean.split(/(?<=[.!?;\n])\s+/);
+
+  let currentSentence = '';
+  for (const part of rawParts) {
+    if (!part) continue;
+    // Check if the part ends with a common abbreviation
+    const isAbbr = /\b(Dr|Mr|Mrs|Ms|Prof|vs|eg|ie|etc|tab|cap|mg|ml|mcg|kg|approx|no)\.$/i.test(part.trim());
+    if (isAbbr) {
+      currentSentence += (currentSentence ? ' ' : '') + part;
+    } else {
+      if (currentSentence) {
+        currentSentence += ' ' + part;
+        sentences.push(currentSentence);
+        currentSentence = '';
+      } else {
+        sentences.push(part);
+      }
+    }
+  }
+  if (currentSentence) {
+    sentences.push(currentSentence);
+  }
+
+  // Group sentences up to targetMaxChars
+  const groupedChunks: string[] = [];
+  let chunkAcc = '';
+
+  for (const sentence of sentences) {
+    const s = sentence.trim();
+    if (!s) continue;
+
+    if (!chunkAcc) {
+      chunkAcc = s;
+    } else if (chunkAcc.length + s.length + 1 <= targetMaxChars) {
+      chunkAcc += ' ' + s;
+    } else {
+      groupedChunks.push(chunkAcc);
+      chunkAcc = s;
+    }
+  }
+
+  if (chunkAcc) {
+    groupedChunks.push(chunkAcc);
+  }
+
+  // Break any remaining oversized chunk at clauses or commas
+  const finalChunks: string[] = [];
+  for (const chunk of groupedChunks) {
+    if (chunk.length > 200) {
+      const parts = chunk.split(/([,:\–\—]|\band\b|\bbut\b|\bbecause\b|\bwith\b)/i);
+      let sub = '';
+      for (const p of parts) {
+        if (!sub) sub = p;
+        else if (sub.length + p.length <= targetMaxChars) sub += p;
+        else {
+          if (sub.trim()) finalChunks.push(sub.trim());
+          sub = p;
+        }
+      }
+      if (sub.trim()) finalChunks.push(sub.trim());
+    } else {
+      finalChunks.push(chunk);
+    }
+  }
+
+  return finalChunks.filter(c => c.trim().length > 0);
+}
+
 /**
  * Converts a base64 string (with or without data URL prefix) into a native Blob.
  */
@@ -297,6 +427,246 @@ class UniversalAudioPlayer {
           this.activeBufferSource.playbackRate.value = clamped;
         }
       },
+      isPlaying: () => this.currentPlaying,
+      isPaused: () => this.currentPaused,
+    };
+
+    return controller;
+  }
+
+  /**
+   * Play streaming audio queue with gapless progression, sub-second TTFB,
+   * live buffering handling, and dynamic chunk feed.
+   */
+  public playStreaming(
+    speed = 1.0,
+    callbacks: StreamingAudioPlaybackCallbacks = {}
+  ): StreamingAudioController {
+    this.stopAll();
+
+    let currentSpeed = Math.max(0.5, Math.min(2.0, speed || 1.0));
+    const chunks: StreamAudioChunk[] = [];
+    let isStreamMarkedComplete = false;
+    let expectedTotal = 0;
+    let activeChunkIndex = -1;
+    let activeChunkController: AudioPlaybackController | null = null;
+    let isBuffering = false;
+    let isStopped = false;
+    let isPausedState = false;
+
+    let prevBufferingState: boolean | null = null;
+    let prevChunkIndex: number | null = null;
+
+    const notifyProgress = () => {
+      if (isStopped) return;
+      const loadedCount = chunks.filter(c => c.status === 'ready' || c.status === 'playing' || c.status === 'played').length;
+      const activeText = activeChunkIndex >= 0 && chunks[activeChunkIndex] ? chunks[activeChunkIndex].text : '';
+      
+      if (prevBufferingState !== isBuffering) {
+        prevBufferingState = isBuffering;
+        callbacks.onBufferingChange?.(isBuffering);
+      }
+
+      if (prevChunkIndex !== activeChunkIndex && activeChunkIndex >= 0) {
+        prevChunkIndex = activeChunkIndex;
+        callbacks.onChunkChange?.(activeChunkIndex, expectedTotal || chunks.length);
+      }
+
+      callbacks.onProgress?.({
+        currentChunkIndex: activeChunkIndex,
+        totalChunks: expectedTotal || chunks.length,
+        loadedChunks: loadedCount,
+        activeText,
+        allChunks: [...chunks],
+        isBuffering,
+      });
+    };
+
+    const tryPlayNextChunk = async () => {
+      if (isStopped || isPausedState) return;
+
+      const nextIndex = activeChunkIndex + 1;
+      const nextChunk = chunks[nextIndex];
+
+      if (!nextChunk) {
+        if (isStreamMarkedComplete && nextIndex >= (expectedTotal || chunks.length)) {
+          // Finished all chunks!
+          this.currentPlaying = false;
+          this.currentPaused = false;
+          callbacks.onEnded?.(chunks);
+        } else {
+          // Waiting for more chunks to be synthesized
+          isBuffering = true;
+          notifyProgress();
+        }
+        return;
+      }
+
+      if (nextChunk.status === 'ready' && (nextChunk.audioBase64 || nextChunk.blob)) {
+        isBuffering = false;
+        activeChunkIndex = nextIndex;
+        nextChunk.status = 'playing';
+        notifyProgress();
+        callbacks.onChunkStart?.(nextChunk);
+
+        try {
+          const base64Data = nextChunk.audioBase64 || (nextChunk.audioDataUrl || '');
+          activeChunkController = await this.playBase64(
+            base64Data,
+            nextChunk.mimeType || 'audio/wav',
+            currentSpeed,
+            {
+              onPlay: () => {
+                this.currentPlaying = true;
+                this.currentPaused = false;
+                if (nextIndex === 0) {
+                  callbacks.onStart?.();
+                }
+              },
+              onPause: () => {
+                this.currentPlaying = false;
+                this.currentPaused = true;
+                callbacks.onPause?.();
+              },
+              onTimeUpdate: (cur, dur) => {
+                callbacks.onTimeUpdate?.(cur, dur);
+              },
+              onEnded: () => {
+                if (isStopped) return;
+                nextChunk.status = 'played';
+                callbacks.onChunkEnded?.(nextChunk);
+                notifyProgress();
+                // Immediately proceed to the next chunk
+                tryPlayNextChunk();
+              },
+              onError: (err) => {
+                console.warn(`Chunk ${nextIndex} playback error:`, err);
+                nextChunk.status = 'error';
+                notifyProgress();
+                // Attempt next chunk despite failure of current
+                tryPlayNextChunk();
+              },
+            }
+          );
+        } catch (playErr) {
+          console.warn(`Failed to play chunk ${nextIndex}:`, playErr);
+          nextChunk.status = 'error';
+          notifyProgress();
+          tryPlayNextChunk();
+        }
+      } else if (nextChunk.status === 'error') {
+        // Skip errored chunk
+        activeChunkIndex = nextIndex;
+        tryPlayNextChunk();
+      } else {
+        // Chunk is not ready yet
+        isBuffering = true;
+        notifyProgress();
+      }
+    };
+
+    const controller: StreamingAudioController = {
+      feedChunk: (chunkOrBase64: StreamAudioChunk | string, mimeType?: string, text?: string) => {
+        if (isStopped) return;
+        let resolvedChunk: StreamAudioChunk;
+        if (typeof chunkOrBase64 === 'string') {
+          resolvedChunk = {
+            index: chunks.length,
+            text: text || '',
+            audioBase64: chunkOrBase64,
+            mimeType: mimeType || 'audio/wav',
+            status: 'ready',
+          };
+        } else {
+          resolvedChunk = {
+            ...chunkOrBase64,
+            status: chunkOrBase64.status || (chunkOrBase64.audioBase64 || chunkOrBase64.blob ? 'ready' : 'pending'),
+          };
+        }
+
+        const existingIdx = chunks.findIndex(c => c.index === resolvedChunk.index);
+        if (existingIdx >= 0) {
+          chunks[existingIdx] = resolvedChunk;
+        } else {
+          chunks.push(resolvedChunk);
+          chunks.sort((a, b) => a.index - b.index);
+        }
+
+        if (resolvedChunk.totalChunks) {
+          expectedTotal = Math.max(expectedTotal, resolvedChunk.totalChunks);
+        }
+
+        callbacks.onChunkLoaded?.(resolvedChunk);
+        notifyProgress();
+
+        // If we were idling or buffering, start playback immediately!
+        if (activeChunkIndex === -1 || isBuffering) {
+          tryPlayNextChunk();
+        }
+      },
+
+      markStreamComplete: (totalChunks?: number) => {
+        isStreamMarkedComplete = true;
+        if (totalChunks) expectedTotal = totalChunks;
+        notifyProgress();
+        if (isBuffering || activeChunkIndex === -1) {
+          tryPlayNextChunk();
+        }
+      },
+
+      pause: () => {
+        isPausedState = true;
+        if (activeChunkController) {
+          activeChunkController.pause();
+        }
+        this.currentPlaying = false;
+        this.currentPaused = true;
+        callbacks.onPause?.();
+      },
+
+      resume: async () => {
+        isPausedState = false;
+        if (activeChunkController) {
+          await activeChunkController.resume();
+          this.currentPlaying = true;
+          this.currentPaused = false;
+          callbacks.onResume?.();
+        } else {
+          tryPlayNextChunk();
+        }
+      },
+
+      stop: () => {
+        isStopped = true;
+        this.stopAll();
+        chunks.length = 0;
+        this.currentPlaying = false;
+        this.currentPaused = false;
+        callbacks.onEnded?.([]);
+      },
+
+      skipCurrentChunk: () => {
+        if (activeChunkController) {
+          activeChunkController.stop();
+        }
+      },
+
+      setSpeed: (newSpeed: number) => {
+        currentSpeed = Math.max(0.5, Math.min(2.0, newSpeed));
+        if (activeChunkController) {
+          activeChunkController.setSpeed(currentSpeed);
+        }
+      },
+
+      getCurrentChunk: () => {
+        if (activeChunkIndex >= 0 && activeChunkIndex < chunks.length) {
+          return chunks[activeChunkIndex];
+        }
+        return null;
+      },
+
+      getAllChunks: () => [...chunks],
+
       isPlaying: () => this.currentPlaying,
       isPaused: () => this.currentPaused,
     };

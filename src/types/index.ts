@@ -300,6 +300,8 @@ export interface SttConfig {
     apiKey?: string;
     endpoint?: string;
     model?: string;
+    customHeaders?: string;
+    customParams?: string;
 }
 
 export interface AiConfig {

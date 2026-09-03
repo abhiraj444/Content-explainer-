@@ -208,6 +208,10 @@ interface SettingsContextType {
     setSttEndpoint: (endpoint: string) => void;
     sttModel: string;
     setSttModel: (model: string) => void;
+    sttCustomHeaders: string;
+    setSttCustomHeaders: (headers: string) => void;
+    sttCustomParams: string;
+    setSttCustomParams: (params: string) => void;
     sttConfig: SttConfig;
     sttProviderKeys: Record<string, string>;
     setSttProviderKey: (providerId: string, key: string) => void;
@@ -304,6 +308,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const [sttApiKey, setSttApiKeyInternal] = useState<string>('');
     const [sttEndpoint, setSttEndpointInternal] = useState<string>('https://api.groq.com/openai/v1');
     const [sttModel, setSttModelInternal] = useState<string>(DEFAULT_STT_MODEL);
+    const [sttCustomHeaders, setSttCustomHeadersInternal] = useState<string>('');
+    const [sttCustomParams, setSttCustomParamsInternal] = useState<string>('');
 
     // TTS State
     const [ttsProvider, setTtsProviderInternal] = useState<TtsProvider>(DEFAULT_TTS_PROVIDER);
@@ -505,6 +511,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
         const savedTtsCustomParams = localStorage.getItem('app_tts_custom_params');
         if (savedTtsCustomParams) setTtsCustomParamsInternal(savedTtsCustomParams);
+
+        const savedSttCustomHeaders = localStorage.getItem('app_stt_custom_headers');
+        if (savedSttCustomHeaders) setSttCustomHeadersInternal(savedSttCustomHeaders);
+
+        const savedSttCustomParams = localStorage.getItem('app_stt_custom_params');
+        if (savedSttCustomParams) setSttCustomParamsInternal(savedSttCustomParams);
 
         const savedSarvamLang = localStorage.getItem('app_tts_sarvam_language');
         if (savedSarvamLang) setTtsSarvamLanguageInternal(savedSarvamLang);
@@ -817,6 +829,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSttModelInternal(sanitized);
     };
 
+    const setSttCustomHeaders = (headers: string) => {
+        localStorage.setItem('app_stt_custom_headers', headers);
+        setSttCustomHeadersInternal(headers);
+    };
+
+    const setSttCustomParams = (params: string) => {
+        localStorage.setItem('app_stt_custom_params', params);
+        setSttCustomParamsInternal(params);
+    };
+
     const setTtsProvider = (provider: TtsProvider, autoLoadKey: boolean = true) => {
         localStorage.setItem('app_tts_provider', provider);
         setTtsProviderInternal(provider);
@@ -934,8 +956,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
         if (preset.id === 'sarvam') {
             setTtsCustomFormat('sarvam');
+            if (!ttsSarvamLanguage) setTtsSarvamLanguage('en-IN');
         } else if (preset.id === 'custom') {
             setTtsCustomFormat('auto');
+        } else {
+            setTtsCustomFormat('json_base64');
         }
 
         const savedKey = getSavedTtsKeyForProvider(preset.id);
@@ -1061,7 +1086,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         apiKey: sttApiKey,
         endpoint: sttEndpoint,
         model: sttModel || DEFAULT_STT_MODEL,
-    }), [sttProvider, sttApiKey, sttEndpoint, sttModel]);
+        customHeaders: sttCustomHeaders,
+        customParams: sttCustomParams,
+    }), [sttProvider, sttApiKey, sttEndpoint, sttModel, sttCustomHeaders, sttCustomParams]);
 
     const ttsSettings: TtsSettings = useMemo(() => ({
         provider: ttsProvider,
@@ -1127,6 +1154,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 setSttEndpoint,
                 sttModel,
                 setSttModel,
+                sttCustomHeaders,
+                setSttCustomHeaders,
+                sttCustomParams,
+                setSttCustomParams,
                 sttConfig,
                 sttProviderKeys,
                 setSttProviderKey,
