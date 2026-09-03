@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import type { DiagnosisItem, ClinicalAnswerData, Slide, FollowUpThread, AiConfig, SttConfig, TtsProvider, TtsSettings, ReportKnowledgeData, KnowledgeTreeNode, KnowledgeMapData, VoiceExplanationContext, VoiceContextType } from '@/types';
+import type { DiagnosisItem, ClinicalAnswerData, Slide, FollowUpThread, AiConfig, SttConfig, TtsProvider, TtsSettings, ReportKnowledgeData, KnowledgeTreeNode, KnowledgeMapData, VoiceExplanationContext, VoiceContextType, TtsAudioPreference } from '@/types';
 import type { TargetLanguage, AudienceMode } from '@/context/SettingsContext';
 import { detectProviderIdFromEndpoint, DEFAULT_TTS_PROVIDER, DEFAULT_TTS_VOICE, DEFAULT_TTS_MODEL } from '@/context/SettingsContext';
 import {
@@ -183,14 +183,16 @@ export function resolveAiConfig(configOrKey?: string | AiConfig): AiConfig {
         const storedTtsModel = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_model') : '') || DEFAULT_TTS_MODEL;
         const storedTtsVoice = (typeof window !== 'undefined' ? localStorage.getItem('app_tts_voice') : '') || DEFAULT_TTS_VOICE;
         const storedTtsSpeed = typeof window !== 'undefined' ? parseFloat(localStorage.getItem('app_tts_speed') || '1') : 1.0;
+        const storedTtsAudioPref = (typeof window !== 'undefined' ? (localStorage.getItem('app_tts_audio_preference') as any) : null) || 'english_indian';
 
         const ttsSettings: TtsSettings = {
             provider: storedTtsProvider || DEFAULT_TTS_PROVIDER,
-            apiKey: storedTtsKey || storedGeminiKey,
+            apiKey: storedTtsKey || undefined,
             endpoint: storedTtsEndpoint,
             model: storedTtsModel,
             voice: storedTtsVoice,
             speed: isNaN(storedTtsSpeed) ? 1.0 : storedTtsSpeed,
+            audioPreference: storedTtsAudioPref,
         };
 
         const explicitKey = (typeof configOrKey === 'string' && configOrKey.trim().length > 0 && !configOrKey.includes('\n') && !configOrKey.includes(' '))
@@ -203,9 +205,9 @@ export function resolveAiConfig(configOrKey?: string | AiConfig): AiConfig {
                 customEndpoint: storedCustomEndpoint,
                 customApiKey: explicitKey || storedCustomKey,
                 customModel: storedCustomModel || 'gpt-4o',
-                geminiApiKey: explicitKey || storedGeminiKey,
+                geminiApiKey: storedGeminiKey,
                 geminiModel: storedGeminiModel,
-                apiKey: explicitKey || storedCustomKey || storedGeminiKey,
+                apiKey: explicitKey || storedCustomKey,
                 enableReasoning: storedEnableReasoning,
                 thinkingBudget: storedEnableReasoning ? 2048 : 0,
                 sttConfig,
@@ -218,6 +220,9 @@ export function resolveAiConfig(configOrKey?: string | AiConfig): AiConfig {
             apiKey: explicitKey || storedGeminiKey,
             geminiApiKey: explicitKey || storedGeminiKey,
             geminiModel: storedGeminiModel || DEFAULT_GEMINI_MODEL,
+            customEndpoint: storedCustomEndpoint,
+            customApiKey: storedCustomKey,
+            customModel: storedCustomModel,
             enableReasoning: storedEnableReasoning,
             thinkingBudget: storedEnableReasoning ? 2048 : 0,
             sttConfig,
@@ -2774,8 +2779,9 @@ Produce the complete Markdown explanation directly without meta-commentary.`;
 
     /**
      * Universal Two-Stage Audio Script Generator.
-     * Uses the app's primary configured LLM to transform complex clinical, scientific,
-     * or non-medical educational content into an engaging, natural spoken script (for TTS).
+     * Uses the app's primary configured LLM to transform complex content into an
+     * engaging, natural spoken script (for TTS).
+     * Dynamically adapts tone, persona, and terminology if the topic is non-medical.
      */
     async generateSpokenScript(
         configOrKey: string | AiConfig | undefined,
@@ -2783,148 +2789,80 @@ Produce the complete Markdown explanation directly without meta-commentary.`;
         signal?: AbortSignal
     ): Promise<string> {
         const config = resolveAiConfig(configOrKey);
-        const lang = context.language || 'english';
+        const audioPref: TtsAudioPreference = context.audioPreference || config.ttsSettings?.audioPreference || (context.language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
+        const lang = context.language || (audioPref === 'hinglish_indian' ? 'hinglish' : 'english');
 
-        // Detect whether the content domain is medical/clinical or non-medical/general
-        const combinedText = `${context.title} ${context.subtitle || ''} ${context.mainContent} ${context.additionalContext || ''}`.toLowerCase();
-        
-        const medicalKeywords = [
-            'patient', 'diagnosis', 'differential', 'pathophysiology', 'etiology', 'symptom', 'sign',
-            'clinical', 'hospital', 'bedside', 'attending', 'physician', 'doctor', 'nurse', 'triage',
-            'pharmacology', 'pharmacodynamics', 'pharmacokinetics', 'mechanism of action', 'adverse effect',
-            'contraindication', 'drug', 'medication', 'dose', 'mg/kg', 'intravenous', 'oral',
-            'prostaglandin', 'cox-1', 'cox-2', 'paracetamol', 'acetaminophen', 'aspirin', 'nsaid', 'antibiotic',
-            'ecg', 'ekg', 'mri', 'ct scan', 'x-ray', 'ultrasound', 'biopsy', 'lab', 'serum', 'plasma',
-            'infarction', 'ischemia', 'hypertension', 'hypotension', 'tachycardia', 'bradycardia',
-            'lesion', 'neoplasm', 'carcinoma', 'syndrome', 'disease', 'disorder', 'infection', 'virus', 'bacteria',
-            'immune', 'antibody', 'antigen', 'hypersensitivity', 'inflammation', 'fever', 'pyrexia',
-            'organ', 'heart', 'lung', 'liver', 'kidney', 'renal', 'hepatic', 'cardiac', 'pulmonary', 'neuro',
-            'viva', 'usmle', 'neet', 'plab', 'guideline', 'prognosis', 'mortality', 'morbidity', 'pre-test probability'
-        ];
-
-        let medicalKeywordCount = 0;
-        for (const kw of medicalKeywords) {
-            if (combinedText.includes(kw)) {
-                medicalKeywordCount++;
-                if (medicalKeywordCount >= 2) break;
-            }
+        let contextGoal = '';
+        switch (context.type) {
+            case 'diagnosis_overall':
+                contextGoal = 'Conduct an authoritative spoken breakdown of the scenario or case, ranking primary hypotheses or findings with their likelihoods, underlying mechanisms, and critical next steps.';
+                break;
+            case 'diagnosis_item':
+                contextGoal = 'Deliver a crisp 35 to 50 second spoken briefing explaining this specific item or finding, supporting evidence, mechanisms, and key considerations.';
+                break;
+            case 'clinical_management':
+                contextGoal = 'Deliver a 40 to 60 second spoken overview of the recommended strategy, first-line actions, essential monitoring, and precautions.';
+                break;
+            case 'clinical_qa':
+                contextGoal = 'Deliver a 45 to 60 second engaging spoken explanation answering this inquiry, explaining the intuition and first principles behind it, and concluding with a high-yield takeaway.';
+                break;
+            case 'slide':
+                contextGoal = 'Deliver a crisp, engaging 40 to 60 second spoken walkthrough of this slide or topic, highlighting core principles and mechanisms, and ending with a memorable takeaway.';
+                break;
+            case 'knowledge_map_summary':
+                contextGoal = 'Deliver a 45 to 60 second captivating spoken overview explaining the overall architecture of this subject or study map, how the core themes interconnect, and why the foundations matter.';
+                break;
+            case 'knowledge_topic_summary':
+                contextGoal = 'Deliver a 30 to 45 second spoken concept summary explaining the core intuition, anchor principle, and significance in simple, crystal-clear terms.';
+                break;
+            case 'knowledge_topic_standard':
+                contextGoal = 'Deliver a 50 to 70 second thorough, step-by-step spoken explanation of the standard mechanisms, principles, and practical applications of this concept.';
+                break;
+            default:
+                contextGoal = 'Deliver a 40 to 50 second clear, engaging, conversational spoken explanation of this material.';
+                break;
         }
 
-        const isMedical = medicalKeywordCount >= 2 ||
-            ['diagnosis_overall', 'diagnosis_item', 'clinical_management'].includes(context.type);
+        const prompt = `You are a master educator, spoken audio presenter, and domain expert.
 
-        let roleInstruction = '';
-        let goalInstruction = '';
+[DOMAIN & SUBJECT ADAPTATION - CRITICAL]:
+Analyze the provided subject, title, and source content carefully to determine its true domain:
+1. IF MEDICAL / CLINICAL / HEALTHCARE (e.g., diseases, physiology, pharmacology, anatomy, patient scenarios, diagnostics):
+   - Embody a distinguished clinician or medical professor.
+   - Explain clinical reasoning, pathophysiology, and practical management with high pedagogical clarity and accurate clinical terminology.
+2. IF NON-MEDICAL (e.g., Computer Science, Software Engineering, Mathematics, Physics, History, Literature, Philosophy, Finance, Art, Everyday Life, General Knowledge):
+   - STRICTLY AVOID any forced medical metaphors, hospital/clinical jargon, or patient references.
+   - Embody an inspiring, knowledgeable expert native to that specific field (e.g., a seasoned software engineer for programming, a physicist for physics, a historian for history).
+   - Use the natural idioms, conceptual models, and standard vocabulary of THAT exact domain.
+   - If the material is general-purpose or creative, narrate it in an engaging, conversational, and natural style fitting the subject.
 
-        if (isMedical) {
-            switch (context.type) {
-                case 'diagnosis_overall':
-                    roleInstruction = 'You are the chief attending physician conducting a critical emergency bedside handover and differential diagnosis debrief.';
-                    goalInstruction = 'Deliver a 45 to 60 second authoritative spoken clinical debrief summarizing the patient presentation, ranking the top differential diagnoses with their likelihoods, explaining the key pathophysiological reasoning, and emphasizing the critical rule-out steps and red flags.';
-                    break;
-                case 'diagnosis_item':
-                    roleInstruction = 'You are a senior clinical consultant debriefing the medical team on a specific differential diagnosis.';
-                    goalInstruction = 'Deliver a crisp 35 to 50 second spoken bedside briefing explaining this diagnosis, its estimated likelihood, supporting clinical evidence from history/labs/imaging, and the critical next diagnostic steps and emergent red flags.';
-                    break;
-                case 'clinical_management':
-                    roleInstruction = 'You are an attending physician and clinical pharmacologist delivering a clinical management briefing.';
-                    goalInstruction = 'Deliver a 40 to 60 second spoken overview of the guideline-directed management, first-line medications, essential monitoring, and contraindications for this case.';
-                    break;
-                case 'clinical_qa':
-                    roleInstruction = 'You are an inspiring postgraduate medical educator answering a clinical inquiry.';
-                    goalInstruction = 'Deliver a 45 to 60 second engaging spoken lecture explaining the answer to this question, why this clinical decision is correct from first principles, and conclude with the high-yield clinical takeaway.';
-                    break;
-                case 'slide':
-                    roleInstruction = 'You are a distinguished clinical professor presenting a teaching slide at medical grand rounds.';
-                    goalInstruction = 'Deliver a crisp, engaging 40 to 60 second spoken presentation walking through this slide, highlighting the core pathophysiological mechanisms, and ending with a memorable high-yield clinical pearl.';
-                    break;
-                case 'knowledge_map_summary':
-                    roleInstruction = 'You are a master academic medical professor orienting students to a clinical knowledge map.';
-                    goalInstruction = 'Deliver a 45 to 60 second captivating spoken overview explaining the overall architecture of this medical topic, how the pathophysiological themes interconnect, and why understanding its clinical first principles is essential.';
-                    break;
-                case 'knowledge_topic_summary':
-                    roleInstruction = 'You are an expert clinical educator providing a concise concept breakdown.';
-                    goalInstruction = 'Deliver a 30 to 45 second spoken concept summary explaining the core intuition, first-principle anchor, and clinical significance of this topic in simple, crystal-clear terms.';
-                    break;
-                case 'knowledge_topic_standard':
-                    roleInstruction = 'You are a clinical professor delivering a deep-dive academic medical lecture.';
-                    goalInstruction = 'Deliver a 50 to 70 second thorough, step-by-step spoken explanation of the standard mechanisms, biological pathways, and clinical applications of this concept.';
-                    break;
-                default:
-                    roleInstruction = 'You are a gifted medical educator and clinical communicator.';
-                    goalInstruction = 'Deliver a 40 to 50 second clear, engaging spoken explanation of this material.';
-                    break;
-            }
-        } else {
-            // Non-Medical: Adapt role and tone to general science, engineering, tech, or academic concepts
-            switch (context.type) {
-                case 'diagnosis_overall':
-                    roleInstruction = 'You are a senior principal engineer and lead system architect delivering an executive diagnostic breakdown.';
-                    goalInstruction = 'Deliver a 45 to 60 second authoritative spoken briefing summarizing the situation, ranking the potential root causes with evidence, and explaining the key principles and next action steps without hospital or medical jargon.';
-                    break;
-                case 'diagnosis_item':
-                    roleInstruction = 'You are a subject-matter expert debriefing the team on a specific factor or hypothesis.';
-                    goalInstruction = 'Deliver a crisp 35 to 50 second spoken briefing explaining this factor, supporting evidence, key mechanics, and the recommended verification step.';
-                    break;
-                case 'clinical_management':
-                    roleInstruction = 'You are an expert strategist and operations lead delivering a remediation and execution plan.';
-                    goalInstruction = 'Deliver a 40 to 60 second spoken overview of the recommended best practices, implementation steps, and key safeguards.';
-                    break;
-                case 'clinical_qa':
-                    roleInstruction = 'You are an inspiring educator and domain authority answering this inquiry.';
-                    goalInstruction = 'Deliver a 45 to 60 second engaging spoken explanation answering this question clearly, explaining why this conclusion is true from first principles, and ending with a valuable key takeaway.';
-                    break;
-                case 'slide':
-                    roleInstruction = 'You are a distinguished professor and keynote presenter delivering an engaging slide presentation on this topic.';
-                    goalInstruction = 'Deliver a crisp, engaging 40 to 60 second spoken walkthrough of this slide, explaining the core concepts, mechanism or logic, and ending with a high-impact key takeaway. Speak directly in the authentic language of this subject without medical metaphors.';
-                    break;
-                case 'knowledge_map_summary':
-                    roleInstruction = 'You are a master academic educator and domain specialist orienting students to a conceptual knowledge map.';
-                    goalInstruction = 'Deliver a 45 to 60 second captivating spoken overview explaining the core architecture of this topic, how the fundamental principles interconnect, and why mastering its foundational logic is essential. DO NOT use hospital or medical metaphors; explain this topic authentically within its own discipline.';
-                    break;
-                case 'knowledge_topic_summary':
-                    roleInstruction = 'You are a master educator and subject expert providing a concise concept breakdown.';
-                    goalInstruction = 'Deliver a 30 to 45 second spoken concept summary explaining the core intuition, first-principle foundation, and real-world significance of this topic in simple, crystal-clear terms. Speak strictly in terms of this subject\'s actual discipline.';
-                    break;
-                case 'knowledge_topic_standard':
-                    roleInstruction = 'You are a university professor delivering a deep-dive academic lecture on this concept.';
-                    goalInstruction = 'Deliver a 50 to 70 second thorough, step-by-step spoken explanation of the standard mechanisms, structural logic, and practical applications of this concept within its field.';
-                    break;
-                default:
-                    roleInstruction = 'You are an engaging educator and gifted science communicator.';
-                    goalInstruction = 'Deliver a 40 to 50 second clear, engaging spoken explanation of this topic.';
-                    break;
-            }
-        }
+[GOAL]:
+${contextGoal}
 
-        const spokenRules = `
-Spoken Audio Script Guidelines (Strictly Enforced):
-1. PURE SPOKEN TEXT ONLY: Never use markdown tags (no #, **, *, _, ~), no bullet points, no numbered lists, no brackets or citations like [1].
-2. WRITTEN FOR THE HUMAN EAR: Write in natural, flowing conversational sentences with natural pauses and transitions (e.g., "Notice how...", "Essentially, this means...", "When you look at...").
-3. CONVERT FORMULAS & ACRONYMS: Spell out all mathematical, physical, code, or medical formulas and abbreviations into natural spoken words (e.g. write "change in pressure" instead of "\\Delta P", "kilograms" instead of "kg", "Application Programming Interface" instead of "API").
-4. DOMAIN SENSITIVITY (CRITICAL DIRECTIVE):
-   - If the topic is MEDICAL or HEALTHCARE related (e.g. pharmacology, clinical diagnosis, cardiology, anatomy, pathology, treatment): speak with authentic clinical authority, medical accuracy, and healthcare clarity.
-   - If the topic or content is NOT related to medicine (such as computer science, mathematics, physics, engineering, history, economics, business, literature, philosophy, or everyday concepts): you MUST adapt the script entirely to that specific field.
-   - STRICTLY FORBIDDEN FOR NON-MEDICAL TOPICS: Do NOT force clinical jargon, patient cases, hospital bedside references, or medical analogies onto non-medical subjects. Teach the subject as a passionate expert in that specific discipline.
-5. LANGUAGE CADENCE:
-   - If language is 'hinglish', speak in fluid, natural conversational Hindi-English mix as used by top educators (e.g., "Is concept ko simple language mein samajhte hain...").
-   - If language is 'english', speak in warm, articulate, professional English.
-6. NO META PREFACE: Output ONLY the spoken transcript words that the voice model should speak directly. Do not include introductory phrases like "Here is the script" or quotes.`;
+[AUDIO PRESENTATION DIRECTIVE - CRITICAL]:
+${audioPref === 'hinglish_indian' ? `TARGET: Conversational Indian Hinglish.
+- Speak in natural, fluid bilingual Hindi + English mix as used by top modern Indian educators (e.g., "Chaliye is concept ko step-by-step aur simple tarike se samajhte hain...").
+- Keep technical/medical keywords in standard English, but explain underlying intuition, mechanisms, and real-world clinical takeaways in natural conversational Hindi.
+- Warm, pedagogical, encouraging tone with authentic Indian cadence.` : audioPref === 'english_indian' ? `TARGET: Clear English in an Indian Educator Cadence.
+- Speak in crystal-clear, articulate English with high phonetic clarity tailored for Indian students, doctors, and listeners.
+- Use lucid sentence structures and natural phrasing. STRICTLY AVOID obscure Western slang, complex American idioms, or colloquialisms that confuse non-US listeners.
+- Maintain an encouraging, respectful, and engaging teacher/mentor cadence.` : `TARGET: Standard American-accented English.
+- Speak in fluent, clear, and articulate English with natural conversational pacing.`}
 
-        const prompt = `${roleInstruction}
-${goalInstruction}
-
-[DOMAIN CONTEXT]: ${isMedical ? 'Medical / Healthcare / Clinical' : 'General / Non-Medical (strictly use discipline-appropriate terms, no medical metaphors)'}
-
-${spokenRules}
+[SPOKEN AUDIO SCRIPT GUIDELINES - STRICTLY ENFORCED]:
+1. PURE SPOKEN TEXT ONLY: Output ONLY plain text for the TTS voice to read aloud. Absolutely NO markdown syntax (no #, **, *, _, ~, \`), no bullet points, no numbered lists, no brackets or citations like [1].
+2. WRITTEN FOR THE HUMAN EAR: Write in fluid, natural conversational speech with organic pauses and transitions (e.g., "Let's look at why...", "In practice, this means...").
+3. CONVERT ACRONYMS & SYMBOLS: Spell out all domain abbreviations, equations, or symbols in natural spoken words.
+4. DOMAIN FIDELITY: Maintain 100% authentic terminology for the topic's actual subject matter.
+5. NO META PREFACE: Output ONLY the spoken transcript words. Never start with "Here is your script" or wrap the response in quotation marks.
 
 [TITLE / SUBJECT]: ${context.title}
 ${context.subtitle ? `[SUBTITLE / STATUS]: ${context.subtitle}` : ''}
 ${context.additionalContext ? `[ADDITIONAL CONTEXT / BACKGROUND]:\n${context.additionalContext}` : ''}
-[CORE CONTENT / SOURCE NOTES]:
+[SOURCE CONTENT]:
 ${context.mainContent}
 
-Language Preference: ${lang === 'hinglish' ? 'Conversational Indian Hinglish' : 'Clear English'}
+Audio Style: ${audioPref === 'hinglish_indian' ? 'Conversational Indian Hinglish' : audioPref === 'english_indian' ? 'Clear English (Indian Cadence)' : 'English (American Accent)'}
 
 Begin spoken transcript now:`;
 
@@ -2961,6 +2899,7 @@ Begin spoken transcript now:`;
             context?: string;
             content: string;
             language?: TargetLanguage;
+            audioPreference?: TtsAudioPreference;
             tone?: 'teacher' | 'physician' | 'lecturer';
             signal?: AbortSignal;
         }
@@ -2984,6 +2923,7 @@ Begin spoken transcript now:`;
                 mainContent: params.content,
                 additionalContext: params.context,
                 language: params.language,
+                audioPreference: params.audioPreference,
             },
             params.signal
         );
@@ -3004,6 +2944,7 @@ Begin spoken transcript now:`;
             apiKey?: string;
             model?: string;
             language?: TargetLanguage;
+            audioPreference?: TtsAudioPreference;
             signal?: AbortSignal;
         }
     ): Promise<{
@@ -3021,7 +2962,9 @@ Begin spoken transcript now:`;
         const effectiveSpeed = params.speed || ttsSettings?.speed || 1.0;
         const effectiveEndpoint = params.endpoint || ttsSettings?.endpoint;
         const effectiveModel = params.model || ttsSettings?.model;
-        const effectiveKey = params.apiKey || ttsSettings?.apiKey || (effectiveProvider === 'gemini' ? (config.geminiApiKey || config.apiKey) : undefined);
+        const effectiveAudioPreference = params.audioPreference || ttsSettings?.audioPreference || (params.language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
+        // Strict key isolation: Only use TTS key, never fall back to main generation/LLM key
+        const effectiveKey = params.apiKey || ttsSettings?.apiKey || undefined;
 
         const response = await fetch('/api/ai/tts', {
             method: 'POST',
@@ -3036,7 +2979,11 @@ Begin spoken transcript now:`;
                 endpoint: effectiveEndpoint,
                 apiKey: effectiveKey,
                 model: effectiveModel,
-                language: params.language || 'english',
+                language: params.language || (effectiveAudioPreference === 'hinglish_indian' ? 'hinglish' : 'english'),
+                audioPreference: effectiveAudioPreference,
+                customFormat: ttsSettings?.customFormat,
+                customHeaders: ttsSettings?.customHeaders,
+                sarvamLanguage: ttsSettings?.sarvamLanguage,
             }),
             signal: params.signal,
         });

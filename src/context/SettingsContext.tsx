@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react';
-import type { AiProvider, AiConfig, SttProvider, SttConfig, TtsProvider, TtsSettings } from '@/types';
+import type { AiProvider, AiConfig, SttProvider, SttConfig, TtsProvider, TtsSettings, CustomTtsFormat, TtsAudioPreference } from '@/types';
 import { KNOWN_TTS_PROVIDERS } from '@/lib/tts-voices';
 
 export type TargetLanguage = 'english' | 'hinglish';
@@ -12,6 +12,7 @@ export const DEFAULT_STT_MODEL = 'whisper-large-v3-turbo';
 export const DEFAULT_TTS_PROVIDER: TtsProvider = 'gemini';
 export const DEFAULT_TTS_VOICE = 'Kore';
 export const DEFAULT_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
+export const DEFAULT_TTS_AUDIO_PREFERENCE: TtsAudioPreference = 'english_indian';
 
 export interface ProviderPresetInfo {
     id: string;
@@ -222,11 +223,19 @@ interface SettingsContextType {
     setTtsVoice: (voice: string) => void;
     ttsSpeed: number;
     setTtsSpeed: (speed: number) => void;
+    ttsCustomFormat: CustomTtsFormat;
+    setTtsCustomFormat: (format: CustomTtsFormat) => void;
+    ttsCustomHeaders: string;
+    setTtsCustomHeaders: (headers: string) => void;
+    ttsSarvamLanguage: string;
+    setTtsSarvamLanguage: (lang: string) => void;
+    ttsAudioPreference: TtsAudioPreference;
+    setTtsAudioPreference: (pref: TtsAudioPreference) => void;
     ttsSettings: TtsSettings;
     ttsProviderKeys: Record<string, string>;
     setTtsProviderKey: (providerId: string, key: string) => void;
     getSavedTtsKeyForProvider: (providerId: string) => string;
-    saveAllTtsProviderKeys: (keys: Record<string, string>) => void;
+    saveAllTtsProviderKeys: (keys: Record<string, string>, currentPid?: string) => void;
     switchToTtsProviderPreset: (providerId: string) => void;
 
     // Saved Models Pill Box History per Provider
@@ -295,6 +304,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const [ttsModel, setTtsModelInternal] = useState<string>(DEFAULT_TTS_MODEL);
     const [ttsVoice, setTtsVoiceInternal] = useState<string>(DEFAULT_TTS_VOICE);
     const [ttsSpeed, setTtsSpeedInternal] = useState<number>(1.0);
+    const [ttsCustomFormat, setTtsCustomFormatInternal] = useState<CustomTtsFormat>('auto');
+    const [ttsCustomHeaders, setTtsCustomHeadersInternal] = useState<string>('');
+    const [ttsSarvamLanguage, setTtsSarvamLanguageInternal] = useState<string>('en-IN');
+    const [ttsAudioPreference, setTtsAudioPreferenceInternal] = useState<TtsAudioPreference>(DEFAULT_TTS_AUDIO_PREFERENCE);
 
     // Saved Models Pill Box History per Provider
     const [savedModelsByProvider, setSavedModelsByProvider] = useState<Record<string, string[]>>(INITIAL_SAVED_MODELS);
@@ -429,31 +442,20 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         } catch {
             loadedTtsKeys = {};
         }
-        const knownTtsIds = ['gemini', 'openrouter', 'openai', 'elevenlabs', 'groq', 'custom', 'browser'];
+        const knownTtsIds = ['gemini', 'openrouter', 'openai', 'elevenlabs', 'groq', 'sarvam', 'custom', 'browser'];
         for (const tpid of knownTtsIds) {
             const standaloneTts = localStorage.getItem(`app_tts_provider_key_${tpid}`);
             if (standaloneTts && !loadedTtsKeys[tpid]) {
                 loadedTtsKeys[tpid] = standaloneTts;
             }
         }
-        // Auto-inherit Gemini key if TTS gemini key is not set
-        if (!loadedTtsKeys['gemini'] && (loadedProviderKeys['gemini'] || legacyGemini)) {
-            loadedTtsKeys['gemini'] = loadedProviderKeys['gemini'] || legacyGemini || '';
-        }
-        // Auto-inherit OpenAI key if set in LLM vault
-        if (!loadedTtsKeys['openai'] && loadedProviderKeys['openai']) {
-            loadedTtsKeys['openai'] = loadedProviderKeys['openai'];
-        }
-        // Auto-inherit OpenRouter key if set in LLM vault
-        if (!loadedTtsKeys['openrouter'] && loadedProviderKeys['openrouter']) {
-            loadedTtsKeys['openrouter'] = loadedProviderKeys['openrouter'];
-        }
+        // Strict key isolation: Do NOT auto-inherit keys between LLM vault and TTS vault
 
         const savedTtsProvider = localStorage.getItem('app_tts_provider') as TtsProvider | null;
         const activeTtsProvider = savedTtsProvider && knownTtsIds.includes(savedTtsProvider) ? savedTtsProvider : DEFAULT_TTS_PROVIDER;
         setTtsProviderInternal(activeTtsProvider);
 
-        const activeTtsKey = loadedTtsKeys[activeTtsProvider] || localStorage.getItem(`app_tts_provider_key_${activeTtsProvider}`) || (activeTtsProvider === 'gemini' ? (loadedProviderKeys['gemini'] || legacyGemini || '') : '');
+        const activeTtsKey = loadedTtsKeys[activeTtsProvider] || localStorage.getItem(`app_tts_provider_key_${activeTtsProvider}`) || '';
         setTtsApiKeyInternal(activeTtsKey);
 
         const savedTtsEndpoint = localStorage.getItem('app_tts_endpoint');
@@ -474,6 +476,20 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             if (!isNaN(parsedSpeed) && parsedSpeed >= 0.5 && parsedSpeed <= 2.0) {
                 setTtsSpeedInternal(parsedSpeed);
             }
+        }
+
+        const savedCustomFormat = localStorage.getItem('app_tts_custom_format') as CustomTtsFormat | null;
+        if (savedCustomFormat) setTtsCustomFormatInternal(savedCustomFormat);
+
+        const savedCustomHeaders = localStorage.getItem('app_tts_custom_headers');
+        if (savedCustomHeaders) setTtsCustomHeadersInternal(savedCustomHeaders);
+
+        const savedSarvamLang = localStorage.getItem('app_tts_sarvam_language');
+        if (savedSarvamLang) setTtsSarvamLanguageInternal(savedSarvamLang);
+
+        const savedAudioPref = localStorage.getItem('app_tts_audio_preference') as TtsAudioPreference | null;
+        if (savedAudioPref && ['hinglish_indian', 'english_indian', 'english_american'].includes(savedAudioPref)) {
+            setTtsAudioPreferenceInternal(savedAudioPref);
         }
 
         setProviderKeys(loadedProviderKeys);
@@ -774,9 +790,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTtsProviderInternal(provider);
 
         if (autoLoadKey) {
-            const savedKey = provider === 'gemini'
-                ? (ttsProviderKeys['gemini'] || geminiApiKey || providerKeys['gemini'] || '')
-                : (ttsProviderKeys[provider] || localStorage.getItem(`app_tts_provider_key_${provider}`) || '');
+            const savedKey = ttsProviderKeys[provider] || localStorage.getItem(`app_tts_provider_key_${provider}`) || '';
             if (savedKey) {
                 setTtsApiKeyInternal(savedKey);
                 localStorage.setItem('app_tts_api_key', savedKey);
@@ -813,21 +827,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     };
 
     const getSavedTtsKeyForProvider = (providerId: string): string => {
-        if (providerId === 'gemini') {
-            return ttsProviderKeys['gemini'] || geminiApiKey || providerKeys['gemini'] || '';
-        }
         return ttsProviderKeys[providerId] || localStorage.getItem(`app_tts_provider_key_${providerId}`) || '';
     };
 
-    const saveAllTtsProviderKeys = (keys: Record<string, string>) => {
+    const saveAllTtsProviderKeys = (keys: Record<string, string>, currentPid?: string) => {
         setTtsProviderKeys(keys);
         localStorage.setItem('app_tts_provider_keys', JSON.stringify(keys));
         for (const [pid, key] of Object.entries(keys)) {
             if (key !== undefined) localStorage.setItem(`app_tts_provider_key_${pid}`, key);
         }
-        if (keys[ttsProvider] !== undefined) {
-            setTtsApiKeyInternal(keys[ttsProvider]);
-            localStorage.setItem('app_tts_api_key', keys[ttsProvider]);
+        const activePid = currentPid || ttsProvider;
+        if (keys[activePid] !== undefined) {
+            setTtsApiKeyInternal(keys[activePid]);
+            localStorage.setItem('app_tts_api_key', keys[activePid]);
         }
     };
 
@@ -854,6 +866,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTtsSpeedInternal(sanitized);
     };
 
+    const setTtsCustomFormat = (format: CustomTtsFormat) => {
+        localStorage.setItem('app_tts_custom_format', format);
+        setTtsCustomFormatInternal(format);
+    };
+
+    const setTtsCustomHeaders = (headers: string) => {
+        localStorage.setItem('app_tts_custom_headers', headers);
+        setTtsCustomHeadersInternal(headers);
+    };
+
+    const setTtsSarvamLanguage = (lang: string) => {
+        localStorage.setItem('app_tts_sarvam_language', lang);
+        setTtsSarvamLanguageInternal(lang);
+    };
+
+    const setTtsAudioPreference = (pref: TtsAudioPreference) => {
+        localStorage.setItem('app_tts_audio_preference', pref);
+        setTtsAudioPreferenceInternal(pref);
+    };
+
     const switchToTtsProviderPreset = (providerId: string) => {
         const preset = KNOWN_TTS_PROVIDERS.find((p) => p.id === providerId);
         if (!preset) return;
@@ -862,6 +894,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTtsEndpoint(preset.endpoint);
         setTtsModel(preset.defaultModel);
         setTtsVoice(preset.defaultVoice);
+
+        if (preset.id === 'sarvam') {
+            setTtsCustomFormat('sarvam');
+        } else if (preset.id === 'custom') {
+            setTtsCustomFormat('auto');
+        }
 
         const savedKey = getSavedTtsKeyForProvider(preset.id);
         setTtsApiKey(savedKey, preset.id);
@@ -995,11 +1033,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         model: ttsModel || DEFAULT_TTS_MODEL,
         voice: ttsVoice || DEFAULT_TTS_VOICE,
         speed: ttsSpeed || 1.0,
-    }), [ttsProvider, ttsApiKey, ttsEndpoint, ttsModel, ttsVoice, ttsSpeed]);
+        customFormat: ttsCustomFormat,
+        customHeaders: ttsCustomHeaders,
+        sarvamLanguage: ttsSarvamLanguage,
+        audioPreference: ttsAudioPreference,
+    }), [ttsProvider, ttsApiKey, ttsEndpoint, ttsModel, ttsVoice, ttsSpeed, ttsCustomFormat, ttsCustomHeaders, ttsSarvamLanguage, ttsAudioPreference]);
 
     const aiConfig: AiConfig = useMemo(() => ({
         provider: aiProvider,
-        apiKey: aiProvider === 'custom' ? (customApiKey || geminiApiKey) : (geminiApiKey || customApiKey),
+        apiKey: aiProvider === 'custom' ? customApiKey : geminiApiKey,
         geminiApiKey,
         geminiModel: geminiModel || DEFAULT_GEMINI_MODEL,
         customEndpoint,
@@ -1009,7 +1051,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         thinkingBudget: enableReasoning ? 2048 : 0,
         sttConfig,
         ttsSettings,
-    }), [aiProvider, geminiApiKey, geminiModel, customEndpoint, customApiKey, customModel, enableReasoning, sttConfig, ttsSettings]);
+    }), [aiProvider, customApiKey, geminiApiKey, geminiModel, customEndpoint, customModel, enableReasoning, sttConfig, ttsSettings]);
 
     return (
         <SettingsContext.Provider
@@ -1058,6 +1100,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 setTtsVoice,
                 ttsSpeed,
                 setTtsSpeed,
+                ttsCustomFormat,
+                setTtsCustomFormat,
+                ttsCustomHeaders,
+                setTtsCustomHeaders,
+                ttsSarvamLanguage,
+                setTtsSarvamLanguage,
+                ttsAudioPreference,
+                setTtsAudioPreference,
                 ttsSettings,
                 ttsProviderKeys,
                 setTtsProviderKey,

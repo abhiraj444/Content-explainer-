@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
@@ -19,10 +20,10 @@ import {
   detectProviderIdFromEndpoint,
   type ProviderPresetInfo,
 } from '@/context/SettingsContext';
-import { KNOWN_TTS_PROVIDERS, TTS_VOICES } from '@/lib/tts-voices';
+import { KNOWN_TTS_PROVIDERS, TTS_VOICES, SARVAM_SUPPORTED_LANGUAGES } from '@/lib/tts-voices';
 import { ClientSideAiService } from '@/lib/ClientSideAiService';
 import { universalAudioPlayer } from '@/lib/AudioPlayerService';
-import type { AiProvider, AiConfig, SttProvider, TtsProvider, TtsSettings } from '@/types';
+import type { AiProvider, AiConfig, SttProvider, TtsProvider, TtsSettings, CustomTtsFormat, TtsAudioPreference } from '@/types';
 import {
   ArrowLeft,
   Save,
@@ -41,6 +42,7 @@ import {
   Mic,
   Volume2,
   VolumeX,
+  Headphones,
   Play,
   Pause,
   FastForward,
@@ -48,6 +50,10 @@ import {
   Check,
   BrainCircuit,
   Key,
+  Languages,
+  FileAudio,
+  Download,
+  Code2,
   ShieldCheck,
   Trash2,
   Layers,
@@ -56,44 +62,9 @@ import {
   Plus,
   History,
   Tag,
-  RotateCw,
-  FileText,
 } from 'lucide-react';
 
 import { ModeLanguageSelector } from '@/components/ModeLanguageSelector';
-
-const TTS_TEST_PRESETS = [
-  {
-    id: 'general',
-    label: 'General Voice Test',
-    tag: 'Intro',
-    text: 'Welcome to the neural voice interface. My speech synthesis connection is active, responsive, and crystal clear.',
-  },
-  {
-    id: 'medical',
-    label: 'Medical & Clinical',
-    tag: 'Pharmacology',
-    text: 'Paracetamol reduces fever and pain primarily by inhibiting central prostaglandin synthesis within the brain.',
-  },
-  {
-    id: 'tech',
-    label: 'Computer Science',
-    tag: 'Algorithms',
-    text: 'In distributed databases, consensus algorithms ensure that all cluster nodes maintain a consistent and synchronized state.',
-  },
-  {
-    id: 'science',
-    label: 'Science & Physics',
-    tag: 'First Principles',
-    text: 'According to the first law of thermodynamics, energy cannot be created or destroyed, only transformed from one form to another.',
-  },
-  {
-    id: 'ping',
-    label: 'Quick Audio Ping',
-    tag: 'Short',
-    text: 'Testing audio synthesis connection, one, two, three.',
-  },
-];
 
 const GEMINI_MODEL_PRESETS = [
   {
@@ -320,11 +291,19 @@ export default function SettingsPage() {
     setTtsVoice,
     ttsSpeed,
     setTtsSpeed,
+    ttsCustomFormat,
+    setTtsCustomFormat,
+    ttsCustomHeaders,
+    setTtsCustomHeaders,
+    ttsSarvamLanguage,
+    setTtsSarvamLanguage,
     ttsProviderKeys,
     setTtsProviderKey,
     saveAllTtsProviderKeys,
     getSavedTtsKeyForProvider,
     switchToTtsProviderPreset,
+    ttsAudioPreference,
+    setTtsAudioPreference,
     compressImagesForAi,
     setCompressImagesForAi,
     targetImageKb,
@@ -372,6 +351,13 @@ export default function SettingsPage() {
   const [localTtsModel, setLocalTtsModel] = useState(ttsModel || DEFAULT_TTS_MODEL);
   const [localTtsVoice, setLocalTtsVoice] = useState(ttsVoice || DEFAULT_TTS_VOICE);
   const [localTtsSpeed, setLocalTtsSpeed] = useState<number>(ttsSpeed || 1.0);
+  const [localTtsCustomFormat, setLocalTtsCustomFormat] = useState<CustomTtsFormat>(ttsCustomFormat || 'auto');
+  const [localTtsCustomHeaders, setLocalTtsCustomHeaders] = useState<string>(ttsCustomHeaders || '');
+  const [localTtsSarvamLanguage, setLocalTtsSarvamLanguage] = useState<string>(ttsSarvamLanguage || 'en-IN');
+  const [localTtsAudioPreference, setLocalTtsAudioPreference] = useState<TtsAudioPreference>(ttsAudioPreference || 'english_indian');
+  const [localTtsTestText, setLocalTtsTestText] = useState<string>(
+    'Welcome to the AI voice test. I explain medical concepts, pathophysiological pathways, and general science with high pedagogical clarity.'
+  );
   const [showTtsKey, setShowTtsKey] = useState(false);
 
   // Audio sample playback for preview
@@ -411,20 +397,12 @@ export default function SettingsPage() {
 
   // Connection Test & Preview state for TTS Voice Synthesis
   const [isTestingTts, setIsTestingTts] = useState(false);
-  const [localTtsTestText, setLocalTtsTestText] = useState<string>(
-    'Welcome to the neural voice interface. My speech synthesis connection is active, responsive, and crystal clear.'
-  );
   const [ttsTestResult, setTtsTestResult] = useState<{
     success: boolean;
     message: string;
     voiceUsed: string;
-    modelUsed?: string;
-    providerUsed?: string;
     latencyMs?: number;
-    byteLength?: number;
-    mimeType?: string;
     audioDataUrl?: string;
-    audioBase64?: string;
   } | null>(null);
 
   const isInitializedRef = useRef(false);
@@ -452,6 +430,9 @@ export default function SettingsPage() {
       setLocalTtsModel(ttsModel || DEFAULT_TTS_MODEL);
       setLocalTtsVoice(ttsVoice || DEFAULT_TTS_VOICE);
       setLocalTtsSpeed(ttsSpeed || 1.0);
+      setLocalTtsCustomFormat(ttsCustomFormat || 'auto');
+      setLocalTtsCustomHeaders(ttsCustomHeaders || '');
+      setLocalTtsSarvamLanguage(ttsSarvamLanguage || 'en-IN');
     }
   }, [
     aiProvider,
@@ -473,6 +454,9 @@ export default function SettingsPage() {
     ttsModel,
     ttsVoice,
     ttsSpeed,
+    ttsCustomFormat,
+    ttsCustomHeaders,
+    ttsSarvamLanguage,
   ]);
 
   // Determine current active custom provider ID
@@ -770,10 +754,15 @@ export default function SettingsPage() {
     setLocalTtsVoice(preset.defaultVoice);
     setTtsTestResult(null);
 
-    // 3. Load saved TTS key for this provider (auto-fallback to Gemini LLM key for Gemini TTS)
-    const savedTts = newPid === 'gemini'
-      ? (ttsVaultKeys['gemini'] || localGeminiKey || vaultKeys['gemini'] || '')
-      : (ttsVaultKeys[newPid] || getSavedTtsKeyForProvider(newPid) || '');
+    if (newPid === 'sarvam') {
+      setLocalTtsCustomFormat('sarvam');
+      if (!localTtsSarvamLanguage) setLocalTtsSarvamLanguage('en-IN');
+    } else if (newPid === 'custom') {
+      setLocalTtsCustomFormat('auto');
+    }
+
+    // 3. Load saved TTS key for this provider (Strict key isolation: isolated from general LLM keys)
+    const savedTts = ttsVaultKeys[newPid] || getSavedTtsKeyForProvider(newPid) || '';
 
     setLocalTtsApiKey(savedTts);
 
@@ -783,21 +772,23 @@ export default function SettingsPage() {
     });
   };
 
-  const handleTestTts = async (customTextOverride?: string) => {
+  const handleTestTts = async () => {
     setIsTestingTts(true);
     setTtsTestResult(null);
     const startTime = Date.now();
 
     // Stop any existing playing sample
     universalAudioPlayer.stop();
-    setIsPlayingSample(false);
-
-    const textToSynthesize =
-      (typeof customTextOverride === 'string' ? customTextOverride : localTtsTestText).trim() ||
-      'Welcome to the neural voice interface. Speech synthesis verified.';
+    if (audioSampleRef.current) {
+      audioSampleRef.current.pause();
+      audioSampleRef.current.src = '';
+      setIsPlayingSample(false);
+    }
 
     try {
-      const effectiveKey = localTtsApiKey.trim() || (localTtsProvider === 'gemini' ? localGeminiKey.trim() : '');
+      const textToSynthesize = localTtsTestText.trim() || 'Welcome to the AI voice test. Audio synthesis connection is functioning properly.';
+      
+      const effectiveKey = localTtsApiKey.trim();
 
       const res = await fetch('/api/ai/tts', {
         method: 'POST',
@@ -810,38 +801,37 @@ export default function SettingsPage() {
           endpoint: localTtsEndpoint.trim(),
           apiKey: effectiveKey,
           model: localTtsModel.trim(),
-          language: 'english',
+          language: localTtsAudioPreference === 'hinglish_indian' ? 'hinglish' : 'english',
+          audioPreference: localTtsAudioPreference,
+          customFormat: localTtsCustomFormat,
+          customHeaders: localTtsCustomHeaders,
+          sarvamLanguage: localTtsSarvamLanguage,
         }),
       });
 
       const data = await res.json();
       const latencyMs = Date.now() - startTime;
 
-      if (res.ok && (data.audioDataUrl || data.audioBase64)) {
-        const base64OrDataUrl = data.audioBase64 || data.audioDataUrl;
-        const mimeType = data.mimeType || 'audio/mp3';
-
+      if (res.ok && data.audioDataUrl) {
         setTtsTestResult({
           success: true,
-          message: `Voice synthesized in ${latencyMs}ms (${data.provider || localTtsProvider} • voice: ${data.voice || localTtsVoice}).`,
+          message: `Voice synthesized in ${latencyMs}ms (${data.provider || localTtsProvider}, voice: ${data.voice || localTtsVoice}).`,
           voiceUsed: data.voice || localTtsVoice,
-          modelUsed: data.model || localTtsModel,
-          providerUsed: data.provider || localTtsProvider,
           latencyMs,
-          byteLength: data.byteLength || (base64OrDataUrl ? Math.round(base64OrDataUrl.length * 0.75) : undefined),
-          mimeType,
           audioDataUrl: data.audioDataUrl,
-          audioBase64: data.audioBase64,
         });
 
         // Play the audio sample safely using universalAudioPlayer (Blob URL + Web Audio API fallback)
         setIsPlayingSample(true);
         universalAudioPlayer.stop();
 
-        await universalAudioPlayer.playBase64(base64OrDataUrl, mimeType, localTtsSpeed, {
+        const base64OrDataUrl = data.audioBase64 || data.audioDataUrl;
+        const mimeType = data.mimeType || 'audio/mp3';
+
+        await universalAudioPlayer.playBase64(base64OrDataUrl, mimeType, {
           onEnded: () => setIsPlayingSample(false),
           onError: (err) => {
-            console.warn('Audio playback notice:', err);
+            console.error('Audio playback error:', err);
             setIsPlayingSample(false);
           },
         });
@@ -851,7 +841,7 @@ export default function SettingsPage() {
           description: `Voice synthesis verified in ${latencyMs}ms (${localTtsProvider} - ${localTtsVoice}).`,
         });
       } else {
-        throw new Error(data.error || 'Failed to synthesize speech audio.');
+        throw new Error(data.error || `Failed to synthesize speech audio (HTTP ${res.status}).`);
       }
     } catch (err: any) {
       const latencyMs = Date.now() - startTime;
@@ -859,8 +849,6 @@ export default function SettingsPage() {
         success: false,
         message: err?.message || 'Voice synthesis test failed. Please verify your TTS API key or provider endpoint.',
         voiceUsed: localTtsVoice,
-        modelUsed: localTtsModel,
-        providerUsed: localTtsProvider,
         latencyMs,
       });
       toast({
@@ -871,29 +859,6 @@ export default function SettingsPage() {
     } finally {
       setIsTestingTts(false);
     }
-  };
-
-  const handleReplayTtsSample = async () => {
-    if (!ttsTestResult?.audioBase64 && !ttsTestResult?.audioDataUrl) return;
-    const base64OrDataUrl = ttsTestResult.audioBase64 || ttsTestResult.audioDataUrl!;
-    const mimeType = ttsTestResult.mimeType || 'audio/mp3';
-
-    if (isPlayingSample) {
-      universalAudioPlayer.stop();
-      setIsPlayingSample(false);
-      return;
-    }
-
-    setIsPlayingSample(true);
-    universalAudioPlayer.stop();
-
-    await universalAudioPlayer.playBase64(base64OrDataUrl, mimeType, localTtsSpeed, {
-      onEnded: () => setIsPlayingSample(false),
-      onError: (err) => {
-        console.warn('Playback notice:', err);
-        setIsPlayingSample(false);
-      },
-    });
   };
 
   const handleSave = () => {
@@ -940,6 +905,10 @@ export default function SettingsPage() {
     setTtsModel(localTtsModel.trim() || DEFAULT_TTS_MODEL);
     setTtsVoice(localTtsVoice || DEFAULT_TTS_VOICE);
     setTtsSpeed(localTtsSpeed || 1.0);
+    setTtsCustomFormat(localTtsCustomFormat);
+    setTtsCustomHeaders(localTtsCustomHeaders);
+    setTtsSarvamLanguage(localTtsSarvamLanguage);
+    setTtsAudioPreference(localTtsAudioPreference);
 
     const completeTtsVault = {
       ...ttsVaultKeys,
@@ -996,6 +965,10 @@ export default function SettingsPage() {
     setLocalTtsModel(DEFAULT_TTS_MODEL);
     setLocalTtsVoice(DEFAULT_TTS_VOICE);
     setLocalTtsSpeed(1.0);
+    setLocalTtsCustomFormat('auto');
+    setLocalTtsCustomHeaders('');
+    setLocalTtsSarvamLanguage('en-IN');
+    setLocalTtsAudioPreference('english_indian');
 
     setLocalCompressImages(true);
     setLocalTargetKb(50);
@@ -1899,9 +1872,7 @@ export default function SettingsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
               {KNOWN_TTS_PROVIDERS.map((preset) => {
                 const isSelected = localTtsProvider === preset.id;
-                const hasKey = preset.id === 'gemini'
-                  ? Boolean(localGeminiKey.trim() || localTtsApiKey.trim())
-                  : preset.id === 'browser'
+                const hasKey = preset.id === 'browser'
                   ? true
                   : Boolean(localTtsApiKey.trim() || ttsVaultKeys[preset.id]);
 
@@ -1924,7 +1895,7 @@ export default function SettingsPage() {
                     <div className="mt-auto flex items-center gap-1.5">
                       {hasKey ? (
                         <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 font-medium">
-                          {preset.id === 'browser' ? 'No Key Req' : preset.id === 'gemini' && !localTtsApiKey.trim() ? 'Shared Gemini Key' : 'Key Ready'}
+                          {preset.id === 'browser' ? 'No Key Req' : 'Key Ready'}
                         </span>
                       ) : (
                         <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 font-medium">
@@ -1948,8 +1919,8 @@ export default function SettingsPage() {
                     {localTtsProvider === 'gemini' ? 'Gemini TTS API Key' : `${localTtsProvider.toUpperCase()} API Key`}
                   </Label>
                   {localTtsProvider === 'gemini' && (
-                    <span className="text-[10px] text-muted-foreground">
-                      {localTtsApiKey.trim() ? 'Custom override key' : 'Defaulting to primary Gemini API Key'}
+                    <span className="text-[10px] text-muted-foreground font-medium">
+                      {localTtsApiKey.trim() ? 'Dedicated TTS Key Configured' : 'Enter Gemini API key for TTS'}
                     </span>
                   )}
                   {(() => {
@@ -1978,7 +1949,7 @@ export default function SettingsPage() {
                     }}
                     placeholder={
                       localTtsProvider === 'gemini'
-                        ? 'Leave blank to use main Gemini Key, or enter AIzaSy...'
+                        ? 'Enter Gemini API Key (e.g. AIzaSy...)'
                         : KNOWN_TTS_PROVIDERS.find((p) => p.id === localTtsProvider)?.placeholder || 'Enter API Key'
                     }
                     className="pr-10 text-xs font-mono"
@@ -2020,8 +1991,205 @@ export default function SettingsPage() {
                   />
                 </div>
               </div>
+
+              {/* Provider-Specific Fine Tuning Controls */}
+              {localTtsProvider === 'sarvam' && (
+                <div className="pt-3 border-t border-border/60 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5">
+                      <Languages className="h-3.5 w-3.5 text-indigo-500" />
+                      Sarvam AI Target Language &amp; Accent
+                    </Label>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 font-semibold">
+                      Language: {localTtsSarvamLanguage}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Sarvam AI Bulbul neural models support authentic Indian languages and regional English accents.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                    {SARVAM_SUPPORTED_LANGUAGES.map((lang) => {
+                      const isSelected = localTtsSarvamLanguage === lang.code;
+                      return (
+                        <button
+                          key={lang.code}
+                          type="button"
+                          onClick={() => setLocalTtsSarvamLanguage(lang.code)}
+                          className={`flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-all ${
+                            isSelected
+                              ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/60 font-semibold text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-500'
+                              : 'border-border/70 hover:bg-muted/40 text-muted-foreground'
+                          }`}
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <span className="truncate">{lang.name}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono">{lang.native}</span>
+                          </div>
+                          {isSelected && <Check className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 shrink-0 ml-1" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground bg-indigo-50/50 dark:bg-indigo-950/30 p-2.5 rounded-lg border border-indigo-200/50 dark:border-indigo-900/50">
+                    <BrainCircuit className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    <span>
+                      Sarvam AI sends audio payloads with <code>api-subscription-key</code> header and handles Hindi, Indian English, and regional languages.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {localTtsProvider === 'custom' && (
+                <div className="pt-3 border-t border-border/60 space-y-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Sliders className="h-3.5 w-3.5 text-indigo-500" />
+                      Response Audio Decoding Format
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Specify how your custom endpoint returns speech audio data.
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                      {[
+                        { id: 'auto', name: 'Auto-Detect', desc: 'Binary stream or JSON wrapper' },
+                        { id: 'json_base64', name: 'JSON Base64', desc: '{ audio: "base64..." }' },
+                        { id: 'binary', name: 'Raw Binary', desc: 'Direct MP3, WAV, or OGG stream' },
+                        { id: 'sarvam', name: 'Sarvam Format', desc: '{ audios: ["base64..."] }' },
+                      ].map((fmt) => {
+                        const isSelected = localTtsCustomFormat === fmt.id;
+                        return (
+                          <button
+                            key={fmt.id}
+                            type="button"
+                            onClick={() => setLocalTtsCustomFormat(fmt.id as CustomTtsFormat)}
+                            className={`flex flex-col p-2.5 rounded-lg border text-left text-xs transition-all ${
+                              isSelected
+                                ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-500 font-medium'
+                                : 'border-border/70 hover:bg-muted/30 text-muted-foreground'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between w-full">
+                              <span className="font-semibold text-foreground">{fmt.name}</span>
+                              {isSelected && <Check className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground mt-0.5">{fmt.desc}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="custom-tts-headers" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        <Code2 className="h-3.5 w-3.5 text-indigo-500" />
+                        Custom HTTP Headers (Optional)
+                      </Label>
+                      <span className="text-[10px] text-muted-foreground font-mono">One header per line (Header-Name: Value)</span>
+                    </div>
+                    <Textarea
+                      id="custom-tts-headers"
+                      value={localTtsCustomHeaders}
+                      onChange={(e) => setLocalTtsCustomHeaders(e.target.value)}
+                      placeholder={`Authorization: Bearer YOUR_TOKEN\nX-Custom-Auth: your-api-secret`}
+                      className="text-xs font-mono min-h-[65px] resize-y bg-background"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {localTtsProvider === 'groq' && (
+                <div className="pt-2 border-t border-border/60">
+                  <div className="p-3 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200/50 dark:border-indigo-900/50 flex items-start gap-2 text-xs text-muted-foreground">
+                    <Activity className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-semibold text-foreground">Groq Orpheus Speech Engine</p>
+                      <p className="text-[11px] leading-relaxed">
+                        Groq Cloud uses CanopyLabs Orpheus models (default: <code className="font-mono text-indigo-600 dark:text-indigo-400">canopylabs/orpheus-v1-english</code>). Select voices below: <span className="font-medium text-foreground">autumn, diana, hannah, austin, daniel, troy</span>.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {localTtsProvider === 'openrouter' && (
+                <div className="pt-2 border-t border-border/60">
+                  <div className="p-3 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200/50 dark:border-indigo-900/50 flex items-start gap-2 text-xs text-muted-foreground">
+                    <Activity className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-semibold text-foreground">OpenRouter Audio Gateway</p>
+                      <p className="text-[11px] leading-relaxed">
+                        OpenRouter routes to models like <code className="font-mono text-indigo-600 dark:text-indigo-400">openai/tts-1</code> or <code className="font-mono text-indigo-600 dark:text-indigo-400">hexgrad/kokoro-82m</code>. Standard voices include <span className="font-medium text-foreground">alloy, echo, nova, shimmer</span>.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
+
+          {/* Global Spoken Voice Tone & Accent Preference */}
+          <div className="space-y-3 p-4 rounded-xl bg-gradient-to-r from-indigo-50/50 to-muted/30 dark:from-indigo-950/20 dark:to-muted/20 border border-indigo-200/60 dark:border-indigo-900/60">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+              <Label className="text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 flex items-center gap-2">
+                <Headphones className="h-3.5 w-3.5 text-indigo-500" />
+                Spoken Voice Tone &amp; Accent Preference
+              </Label>
+              <span className="text-[10px] text-muted-foreground font-medium">
+                Directs speech style across slides, diagnoses &amp; knowledge maps
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Choose your preferred spoken cadence. Medical explanations and interactive audio scripts will be dynamically composed to match this style.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+              {[
+                {
+                  id: 'hinglish_indian',
+                  title: 'Hinglish (Indian Tone)',
+                  badge: '🇮🇳 Most Popular in India',
+                  desc: 'Bilingual Hindi + English mix with natural Indian educator delivery.',
+                },
+                {
+                  id: 'english_indian',
+                  title: 'English (Indian Tone)',
+                  badge: '🇮🇳 High Clarity',
+                  desc: 'Articulate English with clear Indian accent and teacher cadence. No slang.',
+                },
+                {
+                  id: 'english_american',
+                  title: 'American Accent',
+                  badge: '🇺🇸 Standard US',
+                  desc: 'Standard US English accent and international pronunciation.',
+                },
+              ].map((opt) => {
+                const isSelected = localTtsAudioPreference === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setLocalTtsAudioPreference(opt.id as TtsAudioPreference)}
+                    className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
+                      isSelected
+                        ? 'border-indigo-500 bg-white dark:bg-card shadow-xs ring-1 ring-indigo-500'
+                        : 'border-border/70 hover:border-indigo-300 hover:bg-muted/40 bg-card/80'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="font-semibold text-xs text-foreground truncate">{opt.title}</span>
+                      {isSelected && <Check className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 shrink-0 ml-1" />}
+                    </div>
+                    <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 mb-1">
+                      {opt.badge}
+                    </span>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {opt.desc}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {/* Voice Personality & Accent Selection */}
           <div className="space-y-3">
@@ -2112,133 +2280,101 @@ export default function SettingsPage() {
             />
           </div>
 
-          {/* Live Preview & Verification Test with Custom Text Examples */}
-          <div className="pt-2 flex flex-col gap-3.5 p-4 rounded-xl border border-indigo-500/20 bg-indigo-50/30 dark:bg-indigo-950/20">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          {/* Live Preview & Verification Test with Custom Example Text */}
+          <div className="pt-3 border-t border-border/70 space-y-3.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
               <div className="space-y-0.5">
-                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <Radio className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                  Test Speech Synthesis &amp; Verify Audio Playback
+                <Label className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <FileAudio className="h-4 w-4 text-indigo-500" />
+                  TTS Connection Test &amp; Audio Generation Verifier
                 </Label>
                 <p className="text-[11px] text-muted-foreground">
-                  Enter custom text or choose an example below to test your voice provider and verify that audio is generated and played.
+                  Synthesize custom text in real-time to verify that your voice provider responds and generates audible audio.
                 </p>
               </div>
-              <div className="flex items-center gap-1.5 self-start sm:self-auto">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setLocalTtsTestText('Welcome to the neural voice interface. My speech synthesis connection is active, responsive, and crystal clear.')}
-                  className="h-7 text-[10px] text-muted-foreground hover:text-foreground px-2 gap-1"
-                >
-                  <RotateCcw className="h-3 w-3" /> Reset
-                </Button>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground self-start sm:self-auto">
+                {localTtsTestText.length} chars
+              </span>
+            </div>
+
+            {/* Quick Sample Presets */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Quick Example Texts:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  {
+                    label: '🩺 Medical Clinical',
+                    text: 'A 54-year-old patient presents with acute pleuritic chest pain and dyspnea. Let us analyze the cardiac biomarkers and diagnostic pathway.',
+                  },
+                  {
+                    label: '💻 Tech / CS (Non-Medical)',
+                    text: 'In distributed systems, the CAP theorem states that a distributed data store cannot provide consistency, availability, and partition tolerance all at once.',
+                  },
+                  {
+                    label: '🇮🇳 Indian English / Hinglish',
+                    text: 'Namaste doctor, yeh clinical voice test hai to check pronunciation clarity and neural speech output.',
+                  },
+                  {
+                    label: '⚡ Short Voice Check',
+                    text: 'Testing text to speech audio connection. Neural voice synthesis is functioning smoothly.',
+                  },
+                  {
+                    label: '📜 General Science',
+                    text: 'The solar system formed approximately 4.6 billion years ago from the gravitational collapse of a giant interstellar molecular cloud.',
+                  },
+                ].map((sample) => (
+                  <button
+                    key={sample.label}
+                    type="button"
+                    onClick={() => setLocalTtsTestText(sample.text)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg border border-border/80 bg-background hover:bg-muted/60 text-foreground transition-colors font-medium flex items-center gap-1"
+                  >
+                    {sample.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Quick Example Presets */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] font-semibold text-muted-foreground mr-1">Examples:</span>
-              {TTS_TEST_PRESETS.map((preset) => {
-                const isActive = localTtsTestText === preset.text;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => {
-                      setLocalTtsTestText(preset.text);
-                      // Auto-test with this preset if clicked
-                      handleTestTts(preset.text);
-                    }}
-                    disabled={isTestingTts}
-                    className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 ${
-                      isActive
-                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                        : 'bg-background hover:bg-muted/70 text-foreground border-border/80 hover:border-indigo-400/50'
-                    }`}
-                  >
-                    <span>{preset.label}</span>
-                    <span
-                      className={`text-[9px] px-1 py-0.2 rounded font-medium ${
-                        isActive
-                          ? 'bg-white/20 text-white'
-                          : 'bg-muted text-muted-foreground'
-                      }`}
-                    >
-                      {preset.tag}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Custom Input Textarea */}
+            {/* Editable Custom Text Input */}
             <div className="space-y-1">
-              <textarea
+              <Textarea
                 value={localTtsTestText}
                 onChange={(e) => setLocalTtsTestText(e.target.value)}
-                placeholder="Enter custom text to synthesize and test audio output..."
+                placeholder="Enter any custom sentence or paragraph to test audio synthesis..."
+                className="text-xs font-normal min-h-[68px] leading-relaxed resize-y bg-background"
                 rows={2}
-                className="w-full text-xs p-2.5 rounded-lg border border-border/80 bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-indigo-500 transition-all resize-y min-h-[56px] leading-relaxed"
               />
-              <div className="flex items-center justify-between text-[10px] text-muted-foreground px-1">
-                <span>{localTtsTestText.length} characters</span>
-                <span>Language: English ({localTtsVoice})</span>
-              </div>
             </div>
 
-            {/* Action Bar */}
+            {/* Action Buttons */}
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                variant="default"
+                variant="outline"
                 size="sm"
-                onClick={() => handleTestTts()}
-                disabled={isTestingTts || !localTtsTestText.trim()}
-                className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs font-semibold shadow-xs"
+                onClick={handleTestTts}
+                disabled={isTestingTts}
+                className="gap-2 border-indigo-500/50 bg-indigo-50/40 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 h-9 text-xs font-semibold shadow-xs"
               >
                 {isTestingTts ? (
                   <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>Synthesizing Voice...</span>
+                    <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
+                    <span>Synthesizing Voice ({localTtsProvider})...</span>
                   </>
                 ) : isPlayingSample ? (
                   <>
-                    <Volume2 className="h-3.5 w-3.5 animate-pulse" />
-                    <span>Playing Voice Sample...</span>
+                    <Volume2 className="h-4 w-4 text-indigo-500 animate-pulse" />
+                    <span>Playing Audio Sample...</span>
                   </>
                 ) : (
                   <>
-                    <Play className="h-3.5 w-3.5" />
-                    <span>Synthesize &amp; Play Voice</span>
+                    <Play className="h-4 w-4 text-indigo-500" />
+                    <span>Synthesize &amp; Test Voice Sample</span>
                   </>
                 )}
               </Button>
-
-              {/* Replay Button if audio is available */}
-              {(ttsTestResult?.audioBase64 || ttsTestResult?.audioDataUrl) && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleReplayTtsSample}
-                  disabled={isTestingTts}
-                  className="gap-1.5 h-8 text-xs border-indigo-500/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 font-medium"
-                >
-                  {isPlayingSample ? (
-                    <>
-                      <Pause className="h-3.5 w-3.5 text-indigo-500" />
-                      <span>Pause Audio</span>
-                    </>
-                  ) : (
-                    <>
-                      <RotateCw className="h-3.5 w-3.5 text-indigo-500" />
-                      <span>Replay Last Generated Audio</span>
-                    </>
-                  )}
-                </Button>
-              )}
 
               {isPlayingSample && (
                 <Button
@@ -2247,22 +2383,79 @@ export default function SettingsPage() {
                   size="sm"
                   onClick={() => {
                     universalAudioPlayer.stop();
+                    if (audioSampleRef.current) {
+                      audioSampleRef.current.pause();
+                    }
                     setIsPlayingSample(false);
                   }}
-                  className="h-8 text-xs text-muted-foreground hover:text-foreground gap-1.5"
+                  className="h-9 text-xs text-muted-foreground hover:text-foreground gap-1.5"
                 >
-                  <Pause className="h-3 w-3" /> Stop
+                  <Pause className="h-3.5 w-3.5" /> Stop Preview
                 </Button>
+              )}
+
+              {ttsTestResult?.audioDataUrl && !isPlayingSample && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => {
+                    if (ttsTestResult.audioDataUrl) {
+                      setIsPlayingSample(true);
+                      await universalAudioPlayer.playBase64(ttsTestResult.audioDataUrl, 'audio/mp3', {
+                        onEnded: () => setIsPlayingSample(false),
+                        onError: () => setIsPlayingSample(false),
+                      });
+                    }
+                  }}
+                  className="h-9 text-xs text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 gap-1.5 font-medium"
+                >
+                  <Play className="h-3.5 w-3.5" /> Replay Sample
+                </Button>
+              )}
+
+              {ttsTestResult?.audioDataUrl && (
+                <a
+                  href={ttsTestResult.audioDataUrl}
+                  download={`tts-test-${localTtsProvider}-${localTtsVoice}.mp3`}
+                  className="inline-flex items-center gap-1 text-[11px] h-9 px-2.5 rounded-lg border border-border/70 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                  title="Download raw audio file to verify output"
+                >
+                  <Download className="h-3.5 w-3.5" /> Download Audio
+                </a>
               )}
             </div>
 
-            {/* Test Result Message with Diagnostics */}
+            {/* Native Browser HTML5 Audio Player for Direct Inspection */}
+            {ttsTestResult?.audioDataUrl && (
+              <div className="p-3 rounded-xl bg-muted/30 border border-border/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+                    <Volume2 className="h-3.5 w-3.5 text-indigo-500" />
+                    Interactive Audio Player ({localTtsProvider} • {localTtsVoice})
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {ttsTestResult.latencyMs}ms latency
+                  </span>
+                </div>
+                <audio
+                  controls
+                  src={ttsTestResult.audioDataUrl}
+                  className="w-full h-8 accent-indigo-600"
+                  onPlay={() => setIsPlayingSample(true)}
+                  onPause={() => setIsPlayingSample(false)}
+                  onEnded={() => setIsPlayingSample(false)}
+                />
+              </div>
+            )}
+
+            {/* Test Result Message with Actionable Error Diagnostic */}
             {ttsTestResult && (
               <div
-                className={`p-3 rounded-xl border flex items-start gap-2.5 transition-all ${
+                className={`p-3.5 rounded-xl border flex items-start gap-3 transition-all ${
                   ttsTestResult.success
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-300'
-                    : 'bg-red-500/10 border-red-500/30 text-red-800 dark:text-red-300'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-300'
+                    : 'bg-red-500/10 border-red-500/30 text-red-900 dark:text-red-300'
                 }`}
               >
                 {ttsTestResult.success ? (
@@ -2271,38 +2464,34 @@ export default function SettingsPage() {
                   <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
                 )}
                 <div className="space-y-1.5 flex-1 min-w-0 text-xs">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="font-bold">
-                      {ttsTestResult.success ? 'Voice Generated & Playback Ready' : 'Voice Synthesis Error'}
+                      {ttsTestResult.success ? 'Voice Synthesis Verified & Ready' : 'Voice Synthesis Error Received'}
                     </span>
-                    <div className="flex items-center gap-1.5">
-                      {ttsTestResult.latencyMs && (
-                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/80 border border-border">
-                          {ttsTestResult.latencyMs}ms
-                        </span>
-                      )}
-                      {ttsTestResult.mimeType && (
-                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/80 border border-border">
-                          {ttsTestResult.mimeType}
-                        </span>
-                      )}
-                      {ttsTestResult.byteLength && (
-                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/80 border border-border">
-                          {Math.round(ttsTestResult.byteLength / 1024)} KB
-                        </span>
-                      )}
-                    </div>
+                    {ttsTestResult.latencyMs && (
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/60 border border-border">
+                        {ttsTestResult.latencyMs}ms
+                      </span>
+                    )}
                   </div>
-                  <p className="text-[11px] leading-relaxed break-words opacity-90">
+                  <p className="text-[11px] leading-relaxed break-words font-mono bg-background/40 p-2 rounded border border-border/50">
                     {ttsTestResult.message}
                   </p>
-                  {ttsTestResult.success && (
-                    <div className="text-[10px] opacity-80 pt-0.5 flex flex-wrap items-center gap-2 font-mono">
-                      <span>Provider: {ttsTestResult.providerUsed || localTtsProvider}</span>
-                      <span>•</span>
-                      <span>Model: {ttsTestResult.modelUsed || localTtsModel}</span>
-                      <span>•</span>
-                      <span>Voice: {ttsTestResult.voiceUsed || localTtsVoice}</span>
+                  {!ttsTestResult.success && (
+                    <div className="text-[11px] space-y-1 text-muted-foreground pt-1">
+                      <p className="font-semibold text-foreground">Troubleshooting Tips for {localTtsProvider.toUpperCase()}:</p>
+                      {localTtsProvider === 'groq' && (
+                        <p>• Verify model is set to <code className="font-mono">canopylabs/orpheus-v1-english</code> and voice is one of (autumn, diana, hannah, austin, daniel, troy). Also ensure your Groq key has audio permissions.</p>
+                      )}
+                      {localTtsProvider === 'sarvam' && (
+                        <p>• Sarvam AI requires an active API subscription key from sarvam.ai and a valid Indian language code (e.g. en-IN, hi-IN).</p>
+                      )}
+                      {localTtsProvider === 'openrouter' && (
+                        <p>• Ensure your OpenRouter API key has credits and that the specified model (e.g. <code className="font-mono">openai/tts-1</code>) supports speech synthesis.</p>
+                      )}
+                      {localTtsProvider === 'custom' && (
+                        <p>• Check that your custom server endpoint accepts POST requests, and try switching the response format (Auto-Detect, JSON Base64, or Raw Binary).</p>
+                      )}
                     </div>
                   )}
                 </div>

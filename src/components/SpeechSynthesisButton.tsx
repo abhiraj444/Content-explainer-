@@ -61,7 +61,7 @@ export function SpeechSynthesisButton({
   generatePedagogicalScript = true,
 }: SpeechSynthesisButtonProps) {
   const { toast } = useToast();
-  const { ttsSettings, aiConfig, language } = useSettings();
+  const { ttsSettings, aiConfig, language, ttsAudioPreference } = useSettings();
 
   // Browser Web Speech fallback hook
   const {
@@ -105,16 +105,19 @@ export function SpeechSynthesisButton({
     return null;
   }
 
-  // Derive standardized VoiceExplanationContext
+  // Derive standardized VoiceExplanationContext and tone
+  const effectiveAudioPref = voiceContext?.audioPreference || ttsSettings?.audioPreference || ttsAudioPreference || (language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
+
   const resolvedContext: VoiceExplanationContext = voiceContext || {
     type: (pedagogicalContext?.type as VoiceContextType) || 'general',
-    title: pedagogicalContext?.title || 'Clinical Concept',
+    title: pedagogicalContext?.title || 'Concept Explanation',
     mainContent: effectiveText,
     additionalContext: pedagogicalContext?.context,
-    language: language || 'english',
+    language: language || (effectiveAudioPref === 'hinglish_indian' ? 'hinglish' : 'english'),
+    audioPreference: effectiveAudioPref,
   };
 
-  const cacheKey = `${activeProvider}_${activeVoice}_${activeSpeed}_${resolvedContext.type}_${resolvedContext.title}_${effectiveText.slice(0, 80)}`;
+  const cacheKey = `${activeProvider}_${activeVoice}_${activeSpeed}_${effectiveAudioPref}_${resolvedContext.type}_${resolvedContext.title}_${effectiveText.slice(0, 80)}`;
 
   const isCurrentActive = stage === 'playing' || isBrowserSpeaking;
   const isCurrentPaused = stage === 'paused' || isBrowserPaused;
@@ -198,8 +201,9 @@ export function SpeechSynthesisButton({
       setStage('synthesizing_voice');
 
       if (activeProvider === 'browser') {
-        // Direct browser speech fallback
-        toggleBrowserSpeak(scriptToSpeak || effectiveText);
+        // Direct browser speech fallback with accent awareness
+        const browserLang = effectiveAudioPref === 'hinglish_indian' ? 'hi-IN' : effectiveAudioPref === 'english_indian' ? 'en-IN' : 'en-US';
+        toggleBrowserSpeak(scriptToSpeak || effectiveText, browserLang);
         setStage('playing');
         return;
       }
@@ -212,7 +216,8 @@ export function SpeechSynthesisButton({
         endpoint: ttsSettings?.endpoint,
         apiKey: ttsSettings?.apiKey,
         model: ttsSettings?.model,
-        language: language || 'english',
+        language: resolvedContext.language || 'english',
+        audioPreference: effectiveAudioPref,
         signal: controller.signal,
       });
 

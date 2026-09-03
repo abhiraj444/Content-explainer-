@@ -226,7 +226,9 @@ export type AiProvider = 'gemini' | 'custom';
 
 export type SttProvider = 'groq' | 'openai' | 'gemini' | 'custom';
 
-export type TtsProvider = 'gemini' | 'openrouter' | 'openai' | 'elevenlabs' | 'groq' | 'custom' | 'browser';
+export type TtsProvider = 'gemini' | 'openrouter' | 'openai' | 'elevenlabs' | 'groq' | 'sarvam' | 'custom' | 'browser';
+
+export type CustomTtsFormat = 'auto' | 'openai' | 'sarvam' | 'elevenlabs' | 'json_base64';
 
 export interface TtsVoiceOption {
     id: string;
@@ -248,6 +250,8 @@ export type VoiceContextType =
     | 'knowledge_topic_standard'
     | 'general';
 
+export type TtsAudioPreference = 'hinglish_indian' | 'english_indian' | 'english_american';
+
 export interface VoiceExplanationContext {
     type: VoiceContextType;
     title: string;
@@ -255,6 +259,7 @@ export interface VoiceExplanationContext {
     mainContent: string;
     additionalContext?: string;
     language?: TargetLanguage;
+    audioPreference?: TtsAudioPreference;
     targetDurationSeconds?: number;
 }
 
@@ -267,6 +272,10 @@ export interface TtsSettings {
     speed?: number;
     pitch?: number;
     autoPlay?: boolean;
+    customFormat?: CustomTtsFormat;
+    customHeaders?: string;
+    sarvamLanguage?: string;
+    audioPreference?: TtsAudioPreference;
 }
 
 export interface SttConfig {

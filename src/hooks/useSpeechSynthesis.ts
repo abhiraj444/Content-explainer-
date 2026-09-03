@@ -122,12 +122,14 @@ export function useSpeechSynthesis(options: UseSpeechSynthesisOptions = {}) {
       const targetLang = customLang || lang || 'en-US';
       utterance.lang = targetLang;
 
-      // Select best voice if available (prefer natural or high quality English/Indian voice)
+      // Select best voice if available (prefer exact language/region match, e.g. en-IN or hi-IN)
       if (voices.length > 0) {
+        const targetClean = targetLang.replace('_', '-').toLowerCase();
         const matchingVoice =
-          voices.find((v) => v.lang === targetLang && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Neural'))) ||
-          voices.find((v) => v.lang.startsWith(targetLang.slice(0, 2))) ||
-          voices.find((v) => v.lang.startsWith('en')) ||
+          voices.find((v) => v.lang.replace('_', '-').toLowerCase() === targetClean && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Neural') || v.name.includes('India'))) ||
+          voices.find((v) => v.lang.replace('_', '-').toLowerCase() === targetClean) ||
+          voices.find((v) => v.lang.toLowerCase().startsWith(targetClean.slice(0, 2))) ||
+          voices.find((v) => v.lang.toLowerCase().startsWith('en')) ||
           voices[0];
 
         if (matchingVoice) {
