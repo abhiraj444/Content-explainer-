@@ -56,9 +56,44 @@ import {
   Plus,
   History,
   Tag,
+  RotateCw,
+  FileText,
 } from 'lucide-react';
 
 import { ModeLanguageSelector } from '@/components/ModeLanguageSelector';
+
+const TTS_TEST_PRESETS = [
+  {
+    id: 'general',
+    label: 'General Voice Test',
+    tag: 'Intro',
+    text: 'Welcome to the neural voice interface. My speech synthesis connection is active, responsive, and crystal clear.',
+  },
+  {
+    id: 'medical',
+    label: 'Medical & Clinical',
+    tag: 'Pharmacology',
+    text: 'Paracetamol reduces fever and pain primarily by inhibiting central prostaglandin synthesis within the brain.',
+  },
+  {
+    id: 'tech',
+    label: 'Computer Science',
+    tag: 'Algorithms',
+    text: 'In distributed databases, consensus algorithms ensure that all cluster nodes maintain a consistent and synchronized state.',
+  },
+  {
+    id: 'science',
+    label: 'Science & Physics',
+    tag: 'First Principles',
+    text: 'According to the first law of thermodynamics, energy cannot be created or destroyed, only transformed from one form to another.',
+  },
+  {
+    id: 'ping',
+    label: 'Quick Audio Ping',
+    tag: 'Short',
+    text: 'Testing audio synthesis connection, one, two, three.',
+  },
+];
 
 const GEMINI_MODEL_PRESETS = [
   {
@@ -376,12 +411,20 @@ export default function SettingsPage() {
 
   // Connection Test & Preview state for TTS Voice Synthesis
   const [isTestingTts, setIsTestingTts] = useState(false);
+  const [localTtsTestText, setLocalTtsTestText] = useState<string>(
+    'Welcome to the neural voice interface. My speech synthesis connection is active, responsive, and crystal clear.'
+  );
   const [ttsTestResult, setTtsTestResult] = useState<{
     success: boolean;
     message: string;
     voiceUsed: string;
+    modelUsed?: string;
+    providerUsed?: string;
     latencyMs?: number;
+    byteLength?: number;
+    mimeType?: string;
     audioDataUrl?: string;
+    audioBase64?: string;
   } | null>(null);
 
   const isInitializedRef = useRef(false);
@@ -740,28 +783,27 @@ export default function SettingsPage() {
     });
   };
 
-  const handleTestTts = async () => {
+  const handleTestTts = async (customTextOverride?: string) => {
     setIsTestingTts(true);
     setTtsTestResult(null);
     const startTime = Date.now();
 
     // Stop any existing playing sample
-    if (audioSampleRef.current) {
-      audioSampleRef.current.pause();
-      audioSampleRef.current.src = '';
-      setIsPlayingSample(false);
-    }
+    universalAudioPlayer.stop();
+    setIsPlayingSample(false);
+
+    const textToSynthesize =
+      (typeof customTextOverride === 'string' ? customTextOverride : localTtsTestText).trim() ||
+      'Welcome to the neural voice interface. Speech synthesis verified.';
 
     try {
-      const sampleSentence = 'Welcome to the clinical voice teacher. I explain medical concepts, pathophysiological pathways, and differential diagnoses with high pedagogical clarity.';
-      
       const effectiveKey = localTtsApiKey.trim() || (localTtsProvider === 'gemini' ? localGeminiKey.trim() : '');
 
       const res = await fetch('/api/ai/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: sampleSentence,
+          text: textToSynthesize,
           provider: localTtsProvider,
           voice: localTtsVoice,
           speed: localTtsSpeed,
@@ -775,26 +817,31 @@ export default function SettingsPage() {
       const data = await res.json();
       const latencyMs = Date.now() - startTime;
 
-      if (res.ok && data.audioDataUrl) {
+      if (res.ok && (data.audioDataUrl || data.audioBase64)) {
+        const base64OrDataUrl = data.audioBase64 || data.audioDataUrl;
+        const mimeType = data.mimeType || 'audio/mp3';
+
         setTtsTestResult({
           success: true,
-          message: `Voice synthesized in ${latencyMs}ms (${data.provider || localTtsProvider}, voice: ${data.voice || localTtsVoice}).`,
+          message: `Voice synthesized in ${latencyMs}ms (${data.provider || localTtsProvider} • voice: ${data.voice || localTtsVoice}).`,
           voiceUsed: data.voice || localTtsVoice,
+          modelUsed: data.model || localTtsModel,
+          providerUsed: data.provider || localTtsProvider,
           latencyMs,
+          byteLength: data.byteLength || (base64OrDataUrl ? Math.round(base64OrDataUrl.length * 0.75) : undefined),
+          mimeType,
           audioDataUrl: data.audioDataUrl,
+          audioBase64: data.audioBase64,
         });
 
         // Play the audio sample safely using universalAudioPlayer (Blob URL + Web Audio API fallback)
         setIsPlayingSample(true);
         universalAudioPlayer.stop();
 
-        const base64OrDataUrl = data.audioBase64 || data.audioDataUrl;
-        const mimeType = data.mimeType || 'audio/mp3';
-
-        await universalAudioPlayer.playBase64(base64OrDataUrl, mimeType, {
+        await universalAudioPlayer.playBase64(base64OrDataUrl, mimeType, localTtsSpeed, {
           onEnded: () => setIsPlayingSample(false),
           onError: (err) => {
-            console.error('Audio playback error:', err);
+            console.warn('Audio playback notice:', err);
             setIsPlayingSample(false);
           },
         });
@@ -812,6 +859,8 @@ export default function SettingsPage() {
         success: false,
         message: err?.message || 'Voice synthesis test failed. Please verify your TTS API key or provider endpoint.',
         voiceUsed: localTtsVoice,
+        modelUsed: localTtsModel,
+        providerUsed: localTtsProvider,
         latencyMs,
       });
       toast({
@@ -822,6 +871,29 @@ export default function SettingsPage() {
     } finally {
       setIsTestingTts(false);
     }
+  };
+
+  const handleReplayTtsSample = async () => {
+    if (!ttsTestResult?.audioBase64 && !ttsTestResult?.audioDataUrl) return;
+    const base64OrDataUrl = ttsTestResult.audioBase64 || ttsTestResult.audioDataUrl!;
+    const mimeType = ttsTestResult.mimeType || 'audio/mp3';
+
+    if (isPlayingSample) {
+      universalAudioPlayer.stop();
+      setIsPlayingSample(false);
+      return;
+    }
+
+    setIsPlayingSample(true);
+    universalAudioPlayer.stop();
+
+    await universalAudioPlayer.playBase64(base64OrDataUrl, mimeType, localTtsSpeed, {
+      onEnded: () => setIsPlayingSample(false),
+      onError: (err) => {
+        console.warn('Playback notice:', err);
+        setIsPlayingSample(false);
+      },
+    });
   };
 
   const handleSave = () => {
@@ -2040,34 +2112,133 @@ export default function SettingsPage() {
             />
           </div>
 
-          {/* Live Preview & Verification Test Button */}
-          <div className="pt-2 flex flex-col gap-3">
+          {/* Live Preview & Verification Test with Custom Text Examples */}
+          <div className="pt-2 flex flex-col gap-3.5 p-4 rounded-xl border border-indigo-500/20 bg-indigo-50/30 dark:bg-indigo-950/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="space-y-0.5">
+                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Radio className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                  Test Speech Synthesis &amp; Verify Audio Playback
+                </Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Enter custom text or choose an example below to test your voice provider and verify that audio is generated and played.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setLocalTtsTestText('Welcome to the neural voice interface. My speech synthesis connection is active, responsive, and crystal clear.')}
+                  className="h-7 text-[10px] text-muted-foreground hover:text-foreground px-2 gap-1"
+                >
+                  <RotateCcw className="h-3 w-3" /> Reset
+                </Button>
+              </div>
+            </div>
+
+            {/* Quick Example Presets */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-muted-foreground mr-1">Examples:</span>
+              {TTS_TEST_PRESETS.map((preset) => {
+                const isActive = localTtsTestText === preset.text;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      setLocalTtsTestText(preset.text);
+                      // Auto-test with this preset if clicked
+                      handleTestTts(preset.text);
+                    }}
+                    disabled={isTestingTts}
+                    className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 ${
+                      isActive
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : 'bg-background hover:bg-muted/70 text-foreground border-border/80 hover:border-indigo-400/50'
+                    }`}
+                  >
+                    <span>{preset.label}</span>
+                    <span
+                      className={`text-[9px] px-1 py-0.2 rounded font-medium ${
+                        isActive
+                          ? 'bg-white/20 text-white'
+                          : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {preset.tag}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom Input Textarea */}
+            <div className="space-y-1">
+              <textarea
+                value={localTtsTestText}
+                onChange={(e) => setLocalTtsTestText(e.target.value)}
+                placeholder="Enter custom text to synthesize and test audio output..."
+                rows={2}
+                className="w-full text-xs p-2.5 rounded-lg border border-border/80 bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-indigo-500 transition-all resize-y min-h-[56px] leading-relaxed"
+              />
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground px-1">
+                <span>{localTtsTestText.length} characters</span>
+                <span>Language: English ({localTtsVoice})</span>
+              </div>
+            </div>
+
+            {/* Action Bar */}
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                variant="outline"
+                variant="default"
                 size="sm"
-                onClick={handleTestTts}
-                disabled={isTestingTts}
-                className="gap-2 border-indigo-500/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 h-8 text-xs font-semibold"
+                onClick={() => handleTestTts()}
+                disabled={isTestingTts || !localTtsTestText.trim()}
+                className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs font-semibold shadow-xs"
               >
                 {isTestingTts ? (
                   <>
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>Synthesizing Voice (5-10s)...</span>
+                    <span>Synthesizing Voice...</span>
                   </>
                 ) : isPlayingSample ? (
                   <>
-                    <Volume2 className="h-3.5 w-3.5 text-indigo-500 animate-pulse" />
+                    <Volume2 className="h-3.5 w-3.5 animate-pulse" />
                     <span>Playing Voice Sample...</span>
                   </>
                 ) : (
                   <>
-                    <Play className="h-3.5 w-3.5 text-indigo-500" />
-                    <span>Synthesize &amp; Test Voice Sample</span>
+                    <Play className="h-3.5 w-3.5" />
+                    <span>Synthesize &amp; Play Voice</span>
                   </>
                 )}
               </Button>
+
+              {/* Replay Button if audio is available */}
+              {(ttsTestResult?.audioBase64 || ttsTestResult?.audioDataUrl) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleReplayTtsSample}
+                  disabled={isTestingTts}
+                  className="gap-1.5 h-8 text-xs border-indigo-500/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 font-medium"
+                >
+                  {isPlayingSample ? (
+                    <>
+                      <Pause className="h-3.5 w-3.5 text-indigo-500" />
+                      <span>Pause Audio</span>
+                    </>
+                  ) : (
+                    <>
+                      <RotateCw className="h-3.5 w-3.5 text-indigo-500" />
+                      <span>Replay Last Generated Audio</span>
+                    </>
+                  )}
+                </Button>
+              )}
 
               {isPlayingSample && (
                 <Button
@@ -2076,19 +2247,16 @@ export default function SettingsPage() {
                   size="sm"
                   onClick={() => {
                     universalAudioPlayer.stop();
-                    if (audioSampleRef.current) {
-                      audioSampleRef.current.pause();
-                    }
                     setIsPlayingSample(false);
                   }}
                   className="h-8 text-xs text-muted-foreground hover:text-foreground gap-1.5"
                 >
-                  <Pause className="h-3 w-3" /> Stop Preview
+                  <Pause className="h-3 w-3" /> Stop
                 </Button>
               )}
             </div>
 
-            {/* Test Result Message */}
+            {/* Test Result Message with Diagnostics */}
             {ttsTestResult && (
               <div
                 className={`p-3 rounded-xl border flex items-start gap-2.5 transition-all ${
@@ -2102,20 +2270,41 @@ export default function SettingsPage() {
                 ) : (
                   <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
                 )}
-                <div className="space-y-0.5 flex-1 min-w-0 text-xs">
-                  <div className="flex items-center justify-between gap-2">
+                <div className="space-y-1.5 flex-1 min-w-0 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-bold">
-                      {ttsTestResult.success ? 'Voice Synthesis Verified & Ready' : 'Voice Synthesis Error'}
+                      {ttsTestResult.success ? 'Voice Generated & Playback Ready' : 'Voice Synthesis Error'}
                     </span>
-                    {ttsTestResult.latencyMs && (
-                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/60 border border-border">
-                        {ttsTestResult.latencyMs}ms
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {ttsTestResult.latencyMs && (
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/80 border border-border">
+                          {ttsTestResult.latencyMs}ms
+                        </span>
+                      )}
+                      {ttsTestResult.mimeType && (
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/80 border border-border">
+                          {ttsTestResult.mimeType}
+                        </span>
+                      )}
+                      {ttsTestResult.byteLength && (
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-background/80 border border-border">
+                          {Math.round(ttsTestResult.byteLength / 1024)} KB
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <p className="text-[11px] leading-relaxed break-words opacity-90">
                     {ttsTestResult.message}
                   </p>
+                  {ttsTestResult.success && (
+                    <div className="text-[10px] opacity-80 pt-0.5 flex flex-wrap items-center gap-2 font-mono">
+                      <span>Provider: {ttsTestResult.providerUsed || localTtsProvider}</span>
+                      <span>•</span>
+                      <span>Model: {ttsTestResult.modelUsed || localTtsModel}</span>
+                      <span>•</span>
+                      <span>Voice: {ttsTestResult.voiceUsed || localTtsVoice}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

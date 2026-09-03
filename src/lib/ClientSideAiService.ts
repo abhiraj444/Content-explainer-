@@ -2775,7 +2775,7 @@ Produce the complete Markdown explanation directly without meta-commentary.`;
     /**
      * Universal Two-Stage Audio Script Generator.
      * Uses the app's primary configured LLM to transform complex clinical, scientific,
-     * or pedagogical medical content into an engaging, natural spoken script (for TTS).
+     * or non-medical educational content into an engaging, natural spoken script (for TTS).
      */
     async generateSpokenScript(
         configOrKey: string | AiConfig | undefined,
@@ -2785,67 +2785,143 @@ Produce the complete Markdown explanation directly without meta-commentary.`;
         const config = resolveAiConfig(configOrKey);
         const lang = context.language || 'english';
 
+        // Detect whether the content domain is medical/clinical or non-medical/general
+        const combinedText = `${context.title} ${context.subtitle || ''} ${context.mainContent} ${context.additionalContext || ''}`.toLowerCase();
+        
+        const medicalKeywords = [
+            'patient', 'diagnosis', 'differential', 'pathophysiology', 'etiology', 'symptom', 'sign',
+            'clinical', 'hospital', 'bedside', 'attending', 'physician', 'doctor', 'nurse', 'triage',
+            'pharmacology', 'pharmacodynamics', 'pharmacokinetics', 'mechanism of action', 'adverse effect',
+            'contraindication', 'drug', 'medication', 'dose', 'mg/kg', 'intravenous', 'oral',
+            'prostaglandin', 'cox-1', 'cox-2', 'paracetamol', 'acetaminophen', 'aspirin', 'nsaid', 'antibiotic',
+            'ecg', 'ekg', 'mri', 'ct scan', 'x-ray', 'ultrasound', 'biopsy', 'lab', 'serum', 'plasma',
+            'infarction', 'ischemia', 'hypertension', 'hypotension', 'tachycardia', 'bradycardia',
+            'lesion', 'neoplasm', 'carcinoma', 'syndrome', 'disease', 'disorder', 'infection', 'virus', 'bacteria',
+            'immune', 'antibody', 'antigen', 'hypersensitivity', 'inflammation', 'fever', 'pyrexia',
+            'organ', 'heart', 'lung', 'liver', 'kidney', 'renal', 'hepatic', 'cardiac', 'pulmonary', 'neuro',
+            'viva', 'usmle', 'neet', 'plab', 'guideline', 'prognosis', 'mortality', 'morbidity', 'pre-test probability'
+        ];
+
+        let medicalKeywordCount = 0;
+        for (const kw of medicalKeywords) {
+            if (combinedText.includes(kw)) {
+                medicalKeywordCount++;
+                if (medicalKeywordCount >= 2) break;
+            }
+        }
+
+        const isMedical = medicalKeywordCount >= 2 ||
+            ['diagnosis_overall', 'diagnosis_item', 'clinical_management'].includes(context.type);
+
         let roleInstruction = '';
         let goalInstruction = '';
 
-        switch (context.type) {
-            case 'diagnosis_overall':
-                roleInstruction = 'You are the chief attending physician conducting a critical emergency bedside handover and differential diagnosis debrief.';
-                goalInstruction = 'Deliver a 45 to 60 second authoritative spoken clinical debrief summarizing the patient presentation, ranking the top differential diagnoses with their likelihoods, explaining the key pathophysiological reasoning, and emphasizing the critical rule-out steps and red flags.';
-                break;
-            case 'diagnosis_item':
-                roleInstruction = 'You are a senior clinical consultant debriefing the medical team on a specific differential diagnosis.';
-                goalInstruction = 'Deliver a crisp 35 to 50 second spoken bedside briefing explaining this diagnosis, its estimated likelihood, supporting clinical evidence from history/labs/imaging, and the critical next diagnostic steps and emergent red flags.';
-                break;
-            case 'clinical_management':
-                roleInstruction = 'You are an attending physician and clinical pharmacologist delivering a clinical management briefing.';
-                goalInstruction = 'Deliver a 40 to 60 second spoken overview of the guideline-directed management, first-line medications, essential monitoring, and contraindications for this case.';
-                break;
-            case 'clinical_qa':
-                roleInstruction = 'You are an inspiring postgraduate medical educator answering a clinical inquiry.';
-                goalInstruction = 'Deliver a 45 to 60 second engaging spoken lecture explaining the answer to this question, why this clinical decision is correct from first principles, and conclude with the high-yield clinical takeaway.';
-                break;
-            case 'slide':
-                roleInstruction = 'You are a distinguished clinical professor presenting a teaching slide at medical grand rounds.';
-                goalInstruction = 'Deliver a crisp, engaging 40 to 60 second spoken presentation walking through this slide, highlighting the core pathophysiological mechanisms, and ending with a memorable high-yield clinical pearl.';
-                break;
-            case 'knowledge_map_summary':
-                roleInstruction = 'You are a master academic educator and university professor orienting students to a knowledge study map.';
-                goalInstruction = 'Deliver a 45 to 60 second captivating spoken overview explaining the overall architecture of this subject, how the core themes interconnect, and why understanding its first principles is essential.';
-                break;
-            case 'knowledge_topic_summary':
-                roleInstruction = 'You are an expert educator providing a concise concept breakdown.';
-                goalInstruction = 'Deliver a 30 to 45 second spoken concept summary explaining the core intuition, first-principle anchor, and exam significance of this topic in simple, crystal-clear terms.';
-                break;
-            case 'knowledge_topic_standard':
-                roleInstruction = 'You are a university professor delivering a deep-dive academic lecture.';
-                goalInstruction = 'Deliver a 50 to 70 second thorough, step-by-step spoken explanation of the standard mechanisms, pathophysiological pathways, and practical applications of this concept.';
-                break;
-            default:
-                roleInstruction = 'You are a gifted medical educator and clinical communicator.';
-                goalInstruction = 'Deliver a 40 to 50 second clear, engaging spoken explanation of this material.';
-                break;
+        if (isMedical) {
+            switch (context.type) {
+                case 'diagnosis_overall':
+                    roleInstruction = 'You are the chief attending physician conducting a critical emergency bedside handover and differential diagnosis debrief.';
+                    goalInstruction = 'Deliver a 45 to 60 second authoritative spoken clinical debrief summarizing the patient presentation, ranking the top differential diagnoses with their likelihoods, explaining the key pathophysiological reasoning, and emphasizing the critical rule-out steps and red flags.';
+                    break;
+                case 'diagnosis_item':
+                    roleInstruction = 'You are a senior clinical consultant debriefing the medical team on a specific differential diagnosis.';
+                    goalInstruction = 'Deliver a crisp 35 to 50 second spoken bedside briefing explaining this diagnosis, its estimated likelihood, supporting clinical evidence from history/labs/imaging, and the critical next diagnostic steps and emergent red flags.';
+                    break;
+                case 'clinical_management':
+                    roleInstruction = 'You are an attending physician and clinical pharmacologist delivering a clinical management briefing.';
+                    goalInstruction = 'Deliver a 40 to 60 second spoken overview of the guideline-directed management, first-line medications, essential monitoring, and contraindications for this case.';
+                    break;
+                case 'clinical_qa':
+                    roleInstruction = 'You are an inspiring postgraduate medical educator answering a clinical inquiry.';
+                    goalInstruction = 'Deliver a 45 to 60 second engaging spoken lecture explaining the answer to this question, why this clinical decision is correct from first principles, and conclude with the high-yield clinical takeaway.';
+                    break;
+                case 'slide':
+                    roleInstruction = 'You are a distinguished clinical professor presenting a teaching slide at medical grand rounds.';
+                    goalInstruction = 'Deliver a crisp, engaging 40 to 60 second spoken presentation walking through this slide, highlighting the core pathophysiological mechanisms, and ending with a memorable high-yield clinical pearl.';
+                    break;
+                case 'knowledge_map_summary':
+                    roleInstruction = 'You are a master academic medical professor orienting students to a clinical knowledge map.';
+                    goalInstruction = 'Deliver a 45 to 60 second captivating spoken overview explaining the overall architecture of this medical topic, how the pathophysiological themes interconnect, and why understanding its clinical first principles is essential.';
+                    break;
+                case 'knowledge_topic_summary':
+                    roleInstruction = 'You are an expert clinical educator providing a concise concept breakdown.';
+                    goalInstruction = 'Deliver a 30 to 45 second spoken concept summary explaining the core intuition, first-principle anchor, and clinical significance of this topic in simple, crystal-clear terms.';
+                    break;
+                case 'knowledge_topic_standard':
+                    roleInstruction = 'You are a clinical professor delivering a deep-dive academic medical lecture.';
+                    goalInstruction = 'Deliver a 50 to 70 second thorough, step-by-step spoken explanation of the standard mechanisms, biological pathways, and clinical applications of this concept.';
+                    break;
+                default:
+                    roleInstruction = 'You are a gifted medical educator and clinical communicator.';
+                    goalInstruction = 'Deliver a 40 to 50 second clear, engaging spoken explanation of this material.';
+                    break;
+            }
+        } else {
+            // Non-Medical: Adapt role and tone to general science, engineering, tech, or academic concepts
+            switch (context.type) {
+                case 'diagnosis_overall':
+                    roleInstruction = 'You are a senior principal engineer and lead system architect delivering an executive diagnostic breakdown.';
+                    goalInstruction = 'Deliver a 45 to 60 second authoritative spoken briefing summarizing the situation, ranking the potential root causes with evidence, and explaining the key principles and next action steps without hospital or medical jargon.';
+                    break;
+                case 'diagnosis_item':
+                    roleInstruction = 'You are a subject-matter expert debriefing the team on a specific factor or hypothesis.';
+                    goalInstruction = 'Deliver a crisp 35 to 50 second spoken briefing explaining this factor, supporting evidence, key mechanics, and the recommended verification step.';
+                    break;
+                case 'clinical_management':
+                    roleInstruction = 'You are an expert strategist and operations lead delivering a remediation and execution plan.';
+                    goalInstruction = 'Deliver a 40 to 60 second spoken overview of the recommended best practices, implementation steps, and key safeguards.';
+                    break;
+                case 'clinical_qa':
+                    roleInstruction = 'You are an inspiring educator and domain authority answering this inquiry.';
+                    goalInstruction = 'Deliver a 45 to 60 second engaging spoken explanation answering this question clearly, explaining why this conclusion is true from first principles, and ending with a valuable key takeaway.';
+                    break;
+                case 'slide':
+                    roleInstruction = 'You are a distinguished professor and keynote presenter delivering an engaging slide presentation on this topic.';
+                    goalInstruction = 'Deliver a crisp, engaging 40 to 60 second spoken walkthrough of this slide, explaining the core concepts, mechanism or logic, and ending with a high-impact key takeaway. Speak directly in the authentic language of this subject without medical metaphors.';
+                    break;
+                case 'knowledge_map_summary':
+                    roleInstruction = 'You are a master academic educator and domain specialist orienting students to a conceptual knowledge map.';
+                    goalInstruction = 'Deliver a 45 to 60 second captivating spoken overview explaining the core architecture of this topic, how the fundamental principles interconnect, and why mastering its foundational logic is essential. DO NOT use hospital or medical metaphors; explain this topic authentically within its own discipline.';
+                    break;
+                case 'knowledge_topic_summary':
+                    roleInstruction = 'You are a master educator and subject expert providing a concise concept breakdown.';
+                    goalInstruction = 'Deliver a 30 to 45 second spoken concept summary explaining the core intuition, first-principle foundation, and real-world significance of this topic in simple, crystal-clear terms. Speak strictly in terms of this subject\'s actual discipline.';
+                    break;
+                case 'knowledge_topic_standard':
+                    roleInstruction = 'You are a university professor delivering a deep-dive academic lecture on this concept.';
+                    goalInstruction = 'Deliver a 50 to 70 second thorough, step-by-step spoken explanation of the standard mechanisms, structural logic, and practical applications of this concept within its field.';
+                    break;
+                default:
+                    roleInstruction = 'You are an engaging educator and gifted science communicator.';
+                    goalInstruction = 'Deliver a 40 to 50 second clear, engaging spoken explanation of this topic.';
+                    break;
+            }
         }
 
         const spokenRules = `
 Spoken Audio Script Guidelines (Strictly Enforced):
 1. PURE SPOKEN TEXT ONLY: Never use markdown tags (no #, **, *, _, ~), no bullet points, no numbered lists, no brackets or citations like [1].
-2. WRITTEN FOR THE HUMAN EAR: Write in natural, flowing conversational sentences with natural pauses and transitions (e.g., "Notice how...", "Clinically, this means...").
-3. CONVERT FORMULAS & ACRONYMS: Spell out all mathematical, physical, or medical formulas and abbreviations into natural spoken words (e.g. write "Blood pressure" instead of "BP", "ST-elevation myocardial infarction" instead of "STEMI", "change in pressure" instead of "\\Delta P").
-4. LANGUAGE CADENCE:
-   - If language is 'hinglish', speak in fluid, natural conversational Hindi-English mix as used by top medical educators (e.g., "Is topic ko simple language mein samajhte hain...").
-   - If language is 'english', speak in warm, articulate, professional medical English.
-5. NO META PREFACE: Output ONLY the spoken transcript words that the voice model should speak directly. Do not include introductory phrases like "Here is the script" or quotes.`;
+2. WRITTEN FOR THE HUMAN EAR: Write in natural, flowing conversational sentences with natural pauses and transitions (e.g., "Notice how...", "Essentially, this means...", "When you look at...").
+3. CONVERT FORMULAS & ACRONYMS: Spell out all mathematical, physical, code, or medical formulas and abbreviations into natural spoken words (e.g. write "change in pressure" instead of "\\Delta P", "kilograms" instead of "kg", "Application Programming Interface" instead of "API").
+4. DOMAIN SENSITIVITY (CRITICAL DIRECTIVE):
+   - If the topic is MEDICAL or HEALTHCARE related (e.g. pharmacology, clinical diagnosis, cardiology, anatomy, pathology, treatment): speak with authentic clinical authority, medical accuracy, and healthcare clarity.
+   - If the topic or content is NOT related to medicine (such as computer science, mathematics, physics, engineering, history, economics, business, literature, philosophy, or everyday concepts): you MUST adapt the script entirely to that specific field.
+   - STRICTLY FORBIDDEN FOR NON-MEDICAL TOPICS: Do NOT force clinical jargon, patient cases, hospital bedside references, or medical analogies onto non-medical subjects. Teach the subject as a passionate expert in that specific discipline.
+5. LANGUAGE CADENCE:
+   - If language is 'hinglish', speak in fluid, natural conversational Hindi-English mix as used by top educators (e.g., "Is concept ko simple language mein samajhte hain...").
+   - If language is 'english', speak in warm, articulate, professional English.
+6. NO META PREFACE: Output ONLY the spoken transcript words that the voice model should speak directly. Do not include introductory phrases like "Here is the script" or quotes.`;
 
         const prompt = `${roleInstruction}
 ${goalInstruction}
+
+[DOMAIN CONTEXT]: ${isMedical ? 'Medical / Healthcare / Clinical' : 'General / Non-Medical (strictly use discipline-appropriate terms, no medical metaphors)'}
 
 ${spokenRules}
 
 [TITLE / SUBJECT]: ${context.title}
 ${context.subtitle ? `[SUBTITLE / STATUS]: ${context.subtitle}` : ''}
 ${context.additionalContext ? `[ADDITIONAL CONTEXT / BACKGROUND]:\n${context.additionalContext}` : ''}
-[CORE CONTENT / CLINICAL NOTES]:
+[CORE CONTENT / SOURCE NOTES]:
 ${context.mainContent}
 
 Language Preference: ${lang === 'hinglish' ? 'Conversational Indian Hinglish' : 'Clear English'}

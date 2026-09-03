@@ -5,6 +5,43 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 /**
+ * Detects the actual audio MIME type from buffer magic numbers.
+ */
+function detectAudioMimeType(buffer: Buffer, fallbackMime = 'audio/mp3'): string {
+  if (buffer.length >= 4) {
+    const magic4 = buffer.toString('utf-8', 0, 4);
+    if (magic4 === 'RIFF') return 'audio/wav';
+    if (magic4 === 'OggS') return 'audio/ogg';
+    if (magic4 === 'fLaC') return 'audio/flac';
+    if (buffer.toString('utf-8', 0, 3) === 'ID3') return 'audio/mp3';
+    // MP3 sync frame: 11 bits set to 1
+    if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) return 'audio/mp3';
+  }
+  return fallbackMime;
+}
+
+/**
+ * Checks if the buffer contains text/JSON/HTML error instead of valid audio.
+ */
+function parseNonAudioError(buffer: Buffer, contentType = ''): string | null {
+  const isTextual =
+    contentType.includes('application/json') ||
+    contentType.includes('text/html') ||
+    contentType.includes('text/plain');
+
+  if (isTextual || buffer.length < 150 || buffer[0] === 0x7B || buffer[0] === 0x3C) {
+    const raw = buffer.toString('utf-8');
+    try {
+      const json = JSON.parse(raw);
+      return json?.error?.message || json?.error || json?.message || raw;
+    } catch {
+      return raw.slice(0, 300);
+    }
+  }
+  return null;
+}
+
+/**
  * Converts 16-bit Mono PCM raw buffer into a standard RIFF/WAVE header buffer.
  */
 function pcmToWavBuffer(pcmBuffer: Buffer, sampleRate = 24000, numChannels = 1, bitsPerSample = 16): Buffer {
@@ -142,32 +179,72 @@ export async function POST(req: NextRequest) {
         }),
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = Buffer.from(arrayBuffer);
+
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = audioBuffer.toString('utf-8');
+        let errorMsg = errorText;
+        try {
+          const json = JSON.parse(errorText);
+          errorMsg = json?.error?.message || json?.error || json?.message || errorText;
+        } catch {}
         return NextResponse.json(
-          { error: `OpenAI TTS error (${response.status}): ${errorText}` },
+          { error: `OpenAI TTS error (${response.status}): ${errorMsg}` },
           { status: response.status }
         );
       }
 
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      const nonAudioErr = parseNonAudioError(audioBuffer, contentType);
+      if (nonAudioErr) {
+        return NextResponse.json(
+          { error: `OpenAI returned non-audio response: ${nonAudioErr}` },
+          { status: 400 }
+        );
+      }
+
+      const detectedMime = detectAudioMimeType(audioBuffer, 'audio/mp3');
       const base64Audio = audioBuffer.toString('base64');
 
       return NextResponse.json({
         success: true,
         provider: 'openai',
-        mimeType: 'audio/mp3',
-        audioDataUrl: `data:audio/mp3;base64,${base64Audio}`,
+        mimeType: detectedMime,
+        audioDataUrl: `data:${detectedMime};base64,${base64Audio}`,
         audioBase64: base64Audio,
         voice: voice || 'alloy',
+        byteLength: audioBuffer.length,
       });
     }
 
-    // 3. OpenRouter Audio / Custom OpenRouter TTS proxy
+    // 3. OpenRouter Audio / Multi-provider TTS gateway
     if (provider === 'openrouter') {
       const activeKey = clientApiKey || process.env.OPENROUTER_API_KEY;
       if (!activeKey) {
         return NextResponse.json({ error: 'OpenRouter API Key is required for OpenRouter audio.' }, { status: 401 });
+      }
+
+      // Intelligent model resolution: OpenRouter audio models (kokoro, gemini tts, deepgram)
+      let effectiveModel = model?.trim() || 'hexgrad/kokoro-82m';
+      if (effectiveModel === 'openai/tts-1' || effectiveModel === 'tts-1') {
+        effectiveModel = 'hexgrad/kokoro-82m';
+      }
+
+      // Voice resolution for Kokoro / OpenRouter: map legacy OpenAI voice names to Kokoro voices
+      let effectiveVoice = voice || 'af_heart';
+      if (effectiveModel.includes('kokoro')) {
+        const kokoroVoiceMap: Record<string, string> = {
+          alloy: 'af_heart',
+          echo: 'am_adam',
+          fable: 'af_bella',
+          onyx: 'am_michael',
+          nova: 'af_bella',
+          shimmer: 'af_heart',
+        };
+        if (kokoroVoiceMap[effectiveVoice.toLowerCase()]) {
+          effectiveVoice = kokoroVoiceMap[effectiveVoice.toLowerCase()];
+        }
       }
 
       const openRouterUrl = endpoint || 'https://openrouter.ai/api/v1/audio/speech';
@@ -180,31 +257,50 @@ export async function POST(req: NextRequest) {
           'X-Title': 'MediGen Voice AI',
         },
         body: JSON.stringify({
-          model: model || 'openai/tts-1',
+          model: effectiveModel,
           input: cleanText,
-          voice: voice || 'alloy',
+          voice: effectiveVoice,
           speed: Math.max(0.25, Math.min(4.0, Number(speed) || 1.0)),
         }),
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = Buffer.from(arrayBuffer);
+
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = audioBuffer.toString('utf-8');
+        let errorMsg = errorText;
+        try {
+          const json = JSON.parse(errorText);
+          errorMsg = json?.error?.message || json?.error || json?.message || errorText;
+        } catch {}
         return NextResponse.json(
-          { error: `OpenRouter Audio error (${response.status}): ${errorText}` },
+          { error: `OpenRouter Audio error (${response.status}): ${errorMsg}` },
           { status: response.status }
         );
       }
 
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      const nonAudioErr = parseNonAudioError(audioBuffer, contentType);
+      if (nonAudioErr) {
+        return NextResponse.json(
+          { error: `OpenRouter returned non-audio response: ${nonAudioErr}` },
+          { status: 400 }
+        );
+      }
+
+      const detectedMime = detectAudioMimeType(audioBuffer, 'audio/mp3');
       const base64Audio = audioBuffer.toString('base64');
 
       return NextResponse.json({
         success: true,
         provider: 'openrouter',
-        mimeType: 'audio/mp3',
-        audioDataUrl: `data:audio/mp3;base64,${base64Audio}`,
+        mimeType: detectedMime,
+        audioDataUrl: `data:${detectedMime};base64,${base64Audio}`,
         audioBase64: base64Audio,
-        voice: voice || 'alloy',
+        voice: effectiveVoice,
+        model: effectiveModel,
+        byteLength: audioBuffer.length,
       });
     }
 
@@ -234,24 +330,42 @@ export async function POST(req: NextRequest) {
         }),
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = Buffer.from(arrayBuffer);
+
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = audioBuffer.toString('utf-8');
+        let errorMsg = errorText;
+        try {
+          const json = JSON.parse(errorText);
+          errorMsg = json?.error?.message || json?.error || json?.message || errorText;
+        } catch {}
         return NextResponse.json(
-          { error: `ElevenLabs error (${response.status}): ${errorText}` },
+          { error: `ElevenLabs error (${response.status}): ${errorMsg}` },
           { status: response.status }
         );
       }
 
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      const nonAudioErr = parseNonAudioError(audioBuffer, contentType);
+      if (nonAudioErr) {
+        return NextResponse.json(
+          { error: `ElevenLabs returned non-audio response: ${nonAudioErr}` },
+          { status: 400 }
+        );
+      }
+
+      const detectedMime = detectAudioMimeType(audioBuffer, 'audio/mp3');
       const base64Audio = audioBuffer.toString('base64');
 
       return NextResponse.json({
         success: true,
         provider: 'elevenlabs',
-        mimeType: 'audio/mp3',
-        audioDataUrl: `data:audio/mp3;base64,${base64Audio}`,
+        mimeType: detectedMime,
+        audioDataUrl: `data:${detectedMime};base64,${base64Audio}`,
         audioBase64: base64Audio,
         voice: voiceId,
+        byteLength: audioBuffer.length,
       });
     }
 
@@ -280,24 +394,42 @@ export async function POST(req: NextRequest) {
         }),
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = Buffer.from(arrayBuffer);
+
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = audioBuffer.toString('utf-8');
+        let errorMsg = errorText;
+        try {
+          const json = JSON.parse(errorText);
+          errorMsg = json?.error?.message || json?.error || json?.message || errorText;
+        } catch {}
         return NextResponse.json(
-          { error: `${provider.toUpperCase()} TTS error (${response.status}): ${errorText}` },
+          { error: `${provider.toUpperCase()} TTS error (${response.status}): ${errorMsg}` },
           { status: response.status }
         );
       }
 
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      const nonAudioErr = parseNonAudioError(audioBuffer, contentType);
+      if (nonAudioErr) {
+        return NextResponse.json(
+          { error: `${provider.toUpperCase()} returned non-audio response: ${nonAudioErr}` },
+          { status: 400 }
+        );
+      }
+
+      const detectedMime = detectAudioMimeType(audioBuffer, 'audio/mp3');
       const base64Audio = audioBuffer.toString('base64');
 
       return NextResponse.json({
         success: true,
         provider,
-        mimeType: 'audio/mp3',
-        audioDataUrl: `data:audio/mp3;base64,${base64Audio}`,
+        mimeType: detectedMime,
+        audioDataUrl: `data:${detectedMime};base64,${base64Audio}`,
         audioBase64: base64Audio,
         voice,
+        byteLength: audioBuffer.length,
       });
     }
 

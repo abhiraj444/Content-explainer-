@@ -30,11 +30,11 @@ export interface AudioPlaybackCallbacks {
  */
 export function base64ToBlob(base64String: string, defaultMimeType = 'audio/wav'): Blob {
   try {
-    let cleanBase64 = base64String;
+    let cleanBase64 = base64String.trim();
     let mimeType = defaultMimeType;
 
-    if (base64String.includes(',')) {
-      const parts = base64String.split(',');
+    if (cleanBase64.includes(',')) {
+      const parts = cleanBase64.split(',');
       cleanBase64 = parts[1];
       const match = parts[0].match(/:(.*?);/);
       if (match && match[1]) {
@@ -42,16 +42,27 @@ export function base64ToBlob(base64String: string, defaultMimeType = 'audio/wav'
       }
     }
 
+    // Safety check: if string begins with "eyJ" (JSON base64 '{'), it is an error payload, not audio
+    if (cleanBase64.startsWith('eyJ') || cleanBase64.startsWith('eyI')) {
+      throw new Error('TTS service returned a JSON text payload instead of an audio stream.');
+    }
+
     const binaryString = window.atob(cleanBase64);
     const len = binaryString.length;
+    
+    // Check if the decoded string starts with ASCII '{' or '<'
+    if (len > 0 && (binaryString.charCodeAt(0) === 123 || binaryString.charCodeAt(0) === 60)) {
+      throw new Error('Audio stream contains text/JSON data rather than playable audio.');
+    }
+
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
     return new Blob([bytes], { type: mimeType });
-  } catch (err) {
-    console.error('Failed to convert base64 to Blob:', err);
-    throw new Error('Invalid audio data format.');
+  } catch (err: any) {
+    console.warn('Failed to convert base64 to Blob:', err?.message || err);
+    throw new Error(err?.message || 'Invalid audio data format.');
   }
 }
 
@@ -67,6 +78,10 @@ class UniversalAudioPlayer {
   /**
    * Stop any ongoing audio playback across HTML5 Audio and Web Audio API.
    */
+  public stop(): void {
+    this.stopAll();
+  }
+
   public stopAll(): void {
     // 1. Stop HTML5 audio
     if (this.activeAudio) {
@@ -112,14 +127,27 @@ class UniversalAudioPlayer {
 
   /**
    * Play base64 audio with bulletproof error recovery and Web Audio API fallback.
+   * Supports either (data, mimeType, speed, callbacks) OR (data, mimeType, callbacks).
    */
   public async playBase64(
     base64OrDataUrl: string,
     mimeType = 'audio/wav',
-    speed = 1.0,
-    callbacks: AudioPlaybackCallbacks = {}
+    speedOrCallbacks: number | AudioPlaybackCallbacks = 1.0,
+    callbacksArg: AudioPlaybackCallbacks = {}
   ): Promise<AudioPlaybackController> {
     this.stopAll();
+
+    let speed = 1.0;
+    let callbacks: AudioPlaybackCallbacks = callbacksArg;
+
+    if (typeof speedOrCallbacks === 'object' && speedOrCallbacks !== null) {
+      callbacks = speedOrCallbacks;
+      speed = 1.0;
+    } else if (typeof speedOrCallbacks === 'number' && !isNaN(speedOrCallbacks)) {
+      speed = speedOrCallbacks;
+    }
+
+    const safeSpeed = Math.max(0.5, Math.min(2.0, speed || 1.0));
 
     const blob = base64ToBlob(base64OrDataUrl, mimeType);
     const blobUrl = URL.createObjectURL(blob);
@@ -128,7 +156,7 @@ class UniversalAudioPlayer {
     const audio = new Audio();
     this.activeAudio = audio;
     audio.preload = 'auto';
-    audio.playbackRate = Math.max(0.5, Math.min(2.0, speed));
+    audio.playbackRate = safeSpeed;
 
     const handleEnded = () => {
       this.currentPlaying = false;
@@ -166,11 +194,15 @@ class UniversalAudioPlayer {
       this.currentPlaying = true;
       this.currentPaused = false;
     } catch (playError: any) {
-      console.warn('HTML5 audio.play failed, falling back to Web Audio API buffer playback:', playError);
+      console.warn('HTML5 audio.play deferred or failed, falling back to Web Audio API buffer playback:', playError?.message || playError);
 
       // Web Audio API Fallback (Bypasses any media source or browser iframe restrictions)
       try {
         const arrayBuffer = await blob.arrayBuffer();
+        if (arrayBuffer.byteLength < 100) {
+          throw new Error('Audio payload is too small or incomplete to decode.');
+        }
+
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         if (!AudioContextClass) {
           throw new Error('Web Audio API not supported in this browser.');
@@ -180,14 +212,31 @@ class UniversalAudioPlayer {
         this.activeWebAudioCtx = ctx;
 
         if (ctx.state === 'suspended') {
-          await ctx.resume();
+          await ctx.resume().catch(() => {});
         }
 
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        // Decode audio data safely with sliced buffer to prevent detachment issues
+        let audioBuffer: AudioBuffer;
+        try {
+          audioBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
+            const decodePromise = ctx.decodeAudioData(
+              arrayBuffer.slice(0),
+              (buf) => resolve(buf),
+              (err) => reject(err || new Error('Audio decoding failed'))
+            );
+            if (decodePromise && typeof decodePromise.then === 'function') {
+              decodePromise.then(resolve).catch(reject);
+            }
+          });
+        } catch (decodeErr: any) {
+          console.warn('Web Audio decodeAudioData rejected:', decodeErr?.message || decodeErr);
+          throw new Error('Unable to decode audio stream: Format not supported or data corrupted.');
+        }
+
         const source = ctx.createBufferSource();
         this.activeBufferSource = source;
         source.buffer = audioBuffer;
-        source.playbackRate.value = speed;
+        source.playbackRate.value = safeSpeed;
         source.connect(ctx.destination);
 
         this.isUsingWebAudio = true;
@@ -203,7 +252,7 @@ class UniversalAudioPlayer {
         source.start(0);
         callbacks.onPlay?.();
       } catch (fallbackError: any) {
-        console.error('All audio playback methods failed:', fallbackError);
+        console.warn('All audio playback methods caught fallback error:', fallbackError?.message || fallbackError);
         this.stopAll();
         callbacks.onError?.(fallbackError);
         throw fallbackError;
