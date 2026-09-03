@@ -237,6 +237,27 @@ export interface TtsVoiceOption {
     provider: TtsProvider;
 }
 
+export type VoiceContextType =
+    | 'diagnosis_overall'
+    | 'diagnosis_item'
+    | 'clinical_management'
+    | 'clinical_qa'
+    | 'slide'
+    | 'knowledge_map_summary'
+    | 'knowledge_topic_summary'
+    | 'knowledge_topic_standard'
+    | 'general';
+
+export interface VoiceExplanationContext {
+    type: VoiceContextType;
+    title: string;
+    subtitle?: string;
+    mainContent: string;
+    additionalContext?: string;
+    language?: TargetLanguage;
+    targetDurationSeconds?: number;
+}
+
 export interface TtsSettings {
     provider: TtsProvider;
     apiKey?: string;

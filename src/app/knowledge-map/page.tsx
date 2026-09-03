@@ -57,6 +57,7 @@ import ClinicalMarkdownRenderer, { InlineMarkdownRenderer } from '@/components/C
 import { KnowledgeNodeCard } from '@/components/KnowledgeNodeCard';
 import { KnowledgeStudyStage } from '@/components/KnowledgeStudyStage';
 import { KnowledgePdfExportModal } from '@/components/KnowledgePdfExportModal';
+import { SpeechSynthesisButton } from '@/components/SpeechSynthesisButton';
 import Link from 'next/link';
 
 function KnowledgeMapContent() {
@@ -997,9 +998,25 @@ function KnowledgeMapContent() {
                     <BookOpen className="h-4 w-4 text-primary" />
                     Document Synthesis &amp; Primary Themes: &quot;<InlineMarkdownRenderer content={knowledgeMap.title} />&quot;
                   </span>
-                  <Badge variant="outline" className="text-[10px] font-mono">
-                    {totalNodesCount} Topics Dissected
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <SpeechSynthesisButton
+                      size="sm"
+                      label="Explain Summary in Voice"
+                      showLabel={true}
+                      showVoiceBadge={true}
+                      className="h-7 px-2.5 text-xs border-primary/40 font-semibold"
+                      voiceContext={{
+                        type: 'knowledge_map_summary',
+                        title: knowledgeMap.title,
+                        subtitle: `${totalNodesCount} Topics Dissected`,
+                        mainContent: knowledgeMap.documentSummary,
+                        additionalContext: `Topic: ${topicInput}. Learning Goal: ${learningGoal || 'General Mastery'}`,
+                      }}
+                    />
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      {totalNodesCount} Topics Dissected
+                    </Badge>
+                  </div>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-3 sm:p-4 pt-0">

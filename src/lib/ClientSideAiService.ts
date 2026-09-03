@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import type { DiagnosisItem, ClinicalAnswerData, Slide, FollowUpThread, AiConfig, SttConfig, TtsProvider, TtsSettings, ReportKnowledgeData, KnowledgeTreeNode, KnowledgeMapData } from '@/types';
+import type { DiagnosisItem, ClinicalAnswerData, Slide, FollowUpThread, AiConfig, SttConfig, TtsProvider, TtsSettings, ReportKnowledgeData, KnowledgeTreeNode, KnowledgeMapData, VoiceExplanationContext, VoiceContextType } from '@/types';
 import type { TargetLanguage, AudienceMode } from '@/context/SettingsContext';
 import { detectProviderIdFromEndpoint, DEFAULT_TTS_PROVIDER, DEFAULT_TTS_VOICE, DEFAULT_TTS_MODEL } from '@/context/SettingsContext';
 import {
@@ -2773,13 +2773,114 @@ Produce the complete Markdown explanation directly without meta-commentary.`;
     },
 
     /**
-     * Generates a pedagogical, conversational audio script optimized for natural listening.
-     * Replaces symbols, formulas, and asterisks with spoken clarity.
+     * Universal Two-Stage Audio Script Generator.
+     * Uses the app's primary configured LLM to transform complex clinical, scientific,
+     * or pedagogical medical content into an engaging, natural spoken script (for TTS).
+     */
+    async generateSpokenScript(
+        configOrKey: string | AiConfig | undefined,
+        context: VoiceExplanationContext,
+        signal?: AbortSignal
+    ): Promise<string> {
+        const config = resolveAiConfig(configOrKey);
+        const lang = context.language || 'english';
+
+        let roleInstruction = '';
+        let goalInstruction = '';
+
+        switch (context.type) {
+            case 'diagnosis_overall':
+                roleInstruction = 'You are the chief attending physician conducting a critical emergency bedside handover and differential diagnosis debrief.';
+                goalInstruction = 'Deliver a 45 to 60 second authoritative spoken clinical debrief summarizing the patient presentation, ranking the top differential diagnoses with their likelihoods, explaining the key pathophysiological reasoning, and emphasizing the critical rule-out steps and red flags.';
+                break;
+            case 'diagnosis_item':
+                roleInstruction = 'You are a senior clinical consultant debriefing the medical team on a specific differential diagnosis.';
+                goalInstruction = 'Deliver a crisp 35 to 50 second spoken bedside briefing explaining this diagnosis, its estimated likelihood, supporting clinical evidence from history/labs/imaging, and the critical next diagnostic steps and emergent red flags.';
+                break;
+            case 'clinical_management':
+                roleInstruction = 'You are an attending physician and clinical pharmacologist delivering a clinical management briefing.';
+                goalInstruction = 'Deliver a 40 to 60 second spoken overview of the guideline-directed management, first-line medications, essential monitoring, and contraindications for this case.';
+                break;
+            case 'clinical_qa':
+                roleInstruction = 'You are an inspiring postgraduate medical educator answering a clinical inquiry.';
+                goalInstruction = 'Deliver a 45 to 60 second engaging spoken lecture explaining the answer to this question, why this clinical decision is correct from first principles, and conclude with the high-yield clinical takeaway.';
+                break;
+            case 'slide':
+                roleInstruction = 'You are a distinguished clinical professor presenting a teaching slide at medical grand rounds.';
+                goalInstruction = 'Deliver a crisp, engaging 40 to 60 second spoken presentation walking through this slide, highlighting the core pathophysiological mechanisms, and ending with a memorable high-yield clinical pearl.';
+                break;
+            case 'knowledge_map_summary':
+                roleInstruction = 'You are a master academic educator and university professor orienting students to a knowledge study map.';
+                goalInstruction = 'Deliver a 45 to 60 second captivating spoken overview explaining the overall architecture of this subject, how the core themes interconnect, and why understanding its first principles is essential.';
+                break;
+            case 'knowledge_topic_summary':
+                roleInstruction = 'You are an expert educator providing a concise concept breakdown.';
+                goalInstruction = 'Deliver a 30 to 45 second spoken concept summary explaining the core intuition, first-principle anchor, and exam significance of this topic in simple, crystal-clear terms.';
+                break;
+            case 'knowledge_topic_standard':
+                roleInstruction = 'You are a university professor delivering a deep-dive academic lecture.';
+                goalInstruction = 'Deliver a 50 to 70 second thorough, step-by-step spoken explanation of the standard mechanisms, pathophysiological pathways, and practical applications of this concept.';
+                break;
+            default:
+                roleInstruction = 'You are a gifted medical educator and clinical communicator.';
+                goalInstruction = 'Deliver a 40 to 50 second clear, engaging spoken explanation of this material.';
+                break;
+        }
+
+        const spokenRules = `
+Spoken Audio Script Guidelines (Strictly Enforced):
+1. PURE SPOKEN TEXT ONLY: Never use markdown tags (no #, **, *, _, ~), no bullet points, no numbered lists, no brackets or citations like [1].
+2. WRITTEN FOR THE HUMAN EAR: Write in natural, flowing conversational sentences with natural pauses and transitions (e.g., "Notice how...", "Clinically, this means...").
+3. CONVERT FORMULAS & ACRONYMS: Spell out all mathematical, physical, or medical formulas and abbreviations into natural spoken words (e.g. write "Blood pressure" instead of "BP", "ST-elevation myocardial infarction" instead of "STEMI", "change in pressure" instead of "\\Delta P").
+4. LANGUAGE CADENCE:
+   - If language is 'hinglish', speak in fluid, natural conversational Hindi-English mix as used by top medical educators (e.g., "Is topic ko simple language mein samajhte hain...").
+   - If language is 'english', speak in warm, articulate, professional medical English.
+5. NO META PREFACE: Output ONLY the spoken transcript words that the voice model should speak directly. Do not include introductory phrases like "Here is the script" or quotes.`;
+
+        const prompt = `${roleInstruction}
+${goalInstruction}
+
+${spokenRules}
+
+[TITLE / SUBJECT]: ${context.title}
+${context.subtitle ? `[SUBTITLE / STATUS]: ${context.subtitle}` : ''}
+${context.additionalContext ? `[ADDITIONAL CONTEXT / BACKGROUND]:\n${context.additionalContext}` : ''}
+[CORE CONTENT / CLINICAL NOTES]:
+${context.mainContent}
+
+Language Preference: ${lang === 'hinglish' ? 'Conversational Indian Hinglish' : 'Clear English'}
+
+Begin spoken transcript now:`;
+
+        try {
+            const rawScript = await this._runPrompt(config, prompt, undefined, undefined, { signal });
+            const { cleanText } = stripThinkingTags(rawScript || '');
+            let script = cleanText.trim().replace(/^["']|["']$/g, '');
+            // Extra safety cleanup of any stray markdown syntax
+            script = script
+                .replace(/```[\s\S]*?```/g, '')
+                .replace(/[*#_~`\[\]]/g, '')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            return script;
+        } catch (err) {
+            console.warn('AI Spoken Script generation fallback:', err);
+            // Fallback: clean the raw content
+            return context.mainContent
+                .replace(/```[\s\S]*?```/g, '')
+                .replace(/[*#_~`\[\]]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+    },
+
+    /**
+     * Backward-compatible wrapper for audio explanation script generation.
      */
     async generateAudioExplanationScript(
         configOrKey: string | AiConfig | undefined,
         params: {
-            feature: 'knowledge-map' | 'slide' | 'diagnosis';
+            feature: 'knowledge-map' | 'slide' | 'diagnosis' | 'knowledge_node' | 'clinical_qa';
             title: string;
             context?: string;
             content: string;
@@ -2788,60 +2889,28 @@ Produce the complete Markdown explanation directly without meta-commentary.`;
             signal?: AbortSignal;
         }
     ): Promise<string> {
-        const { feature, title, context, content, language = 'english', signal } = params;
-        const config = resolveAiConfig(configOrKey);
-
-        let systemInstruction = '';
-        if (feature === 'knowledge-map') {
-            systemInstruction = `You are a master academic educator and inspiring university professor.
-Convert the provided knowledge study notes into a smooth, captivating 30 to 50 second spoken audio explanation.
-
-Spoken Style Guidelines:
-- Speak directly to the listener in a warm, encouraging teacher voice ("Let's understand how...", "Notice the key mechanism here...").
-- If language is 'hinglish', speak in natural conversational Hindi-English mix as spoken by popular Indian educators (e.g. "Is topic ko simple language mein samajhte hain...").
-- Never output markdown tags, hashtags (#), bullet asterisks (*), or raw symbols ($ \\Delta P $). Convert mathematical or physical equations into spoken words (e.g. "change in pressure equals...").
-- Keep it crystal clear, structured, and easy to follow purely by listening with ears closed.
-- Output ONLY the spoken text transcript. Do not output metadata or preface.`;
-        } else if (feature === 'slide') {
-            systemInstruction = `You are a distinguished clinical professor presenting a teaching slide at medical grand rounds.
-Deliver a crisp, engaging 40 to 60 second spoken presentation of this slide.
-
-Spoken Style Guidelines:
-- Introduce the core concept with clarity, walk through the essential physiological mechanisms and diagnostic findings, and conclude with the high-yield clinical pearl.
-- If language is 'hinglish', use fluid conversational medical Hinglish.
-- Convert all medical acronyms, abbreviations, and table entries into natural spoken phrases.
-- Output ONLY the spoken lecture script. Do not output markdown or headers.`;
-        } else {
-            // diagnosis
-            systemInstruction = `You are a senior attending physician debriefing your clinical team at bedside.
-Deliver a crisp 30 to 45 second spoken clinical briefing for this differential diagnosis.
-
-Spoken Style Guidelines:
-- State the diagnosis, estimated likelihood, the pathophysiological rationale, and the critical next diagnostic steps and emergent red flags to watch for.
-- Speak authoritatively, clearly, and reassuringly.
-- Output ONLY the spoken transcript text.`;
+        let type: VoiceContextType = 'general';
+        if (params.feature === 'knowledge-map' || params.feature === 'knowledge_node') {
+            type = 'knowledge_topic_summary';
+        } else if (params.feature === 'slide') {
+            type = 'slide';
+        } else if (params.feature === 'diagnosis') {
+            type = 'diagnosis_item';
+        } else if (params.feature === 'clinical_qa') {
+            type = 'clinical_qa';
         }
 
-        const prompt = `${systemInstruction}
-
-[CONTEXT / TOPIC]: ${context || 'General'}
-[SUBJECT / ITEM TITLE]: ${title}
-[RAW CONTENT & CLINICAL NOTES]:
-${content}
-
-Language preference: ${language === 'hinglish' ? 'Conversational Indian Hinglish' : 'Clear English'}
-
-Generate the spoken explanation script now:`;
-
-        try {
-            const script = await this._runPrompt(config, prompt, undefined, undefined, { signal });
-            const { cleanText } = stripThinkingTags(script || '');
-            return cleanText.trim().replace(/^["']|["']$/g, '');
-        } catch (err) {
-            console.warn('AI Audio script generation fallback:', err);
-            // Fallback: clean the raw text of markdown formatting
-            return content.replace(/[*#`_~\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-        }
+        return this.generateSpokenScript(
+            configOrKey,
+            {
+                type,
+                title: params.title,
+                mainContent: params.content,
+                additionalContext: params.context,
+                language: params.language,
+            },
+            params.signal
+        );
     },
 
     /**

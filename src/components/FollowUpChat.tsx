@@ -354,9 +354,14 @@ export function FollowUpChat({
                         </span>
                         <div className="flex items-center gap-1">
                           <SpeechSynthesisButton
-                            text={`${thread.answer}. ${thread.reasoning || ''}`}
                             size="icon"
                             className="h-7 w-7"
+                            voiceContext={{
+                              type: 'clinical_qa',
+                              title: thread.question,
+                              mainContent: thread.answer,
+                              additionalContext: `Clinical Reasoning: ${thread.reasoning || ''}`,
+                            }}
                           />
                           <Button
                             variant="ghost"

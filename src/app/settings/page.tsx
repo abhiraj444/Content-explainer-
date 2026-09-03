@@ -21,6 +21,7 @@ import {
 } from '@/context/SettingsContext';
 import { KNOWN_TTS_PROVIDERS, TTS_VOICES } from '@/lib/tts-voices';
 import { ClientSideAiService } from '@/lib/ClientSideAiService';
+import { universalAudioPlayer } from '@/lib/AudioPlayerService';
 import type { AiProvider, AiConfig, SttProvider, TtsProvider, TtsSettings } from '@/types';
 import {
   ArrowLeft,
@@ -783,13 +784,20 @@ export default function SettingsPage() {
           audioDataUrl: data.audioDataUrl,
         });
 
-        // Play the audio sample
-        const audio = new Audio(data.audioDataUrl);
-        audioSampleRef.current = audio;
+        // Play the audio sample safely using universalAudioPlayer (Blob URL + Web Audio API fallback)
         setIsPlayingSample(true);
-        audio.onended = () => setIsPlayingSample(false);
-        audio.onerror = () => setIsPlayingSample(false);
-        await audio.play();
+        universalAudioPlayer.stop();
+
+        const base64OrDataUrl = data.audioBase64 || data.audioDataUrl;
+        const mimeType = data.mimeType || 'audio/mp3';
+
+        await universalAudioPlayer.playBase64(base64OrDataUrl, mimeType, {
+          onEnded: () => setIsPlayingSample(false),
+          onError: (err) => {
+            console.error('Audio playback error:', err);
+            setIsPlayingSample(false);
+          },
+        });
 
         toast({
           title: 'Voice Synthesized & Playing',
@@ -2067,10 +2075,11 @@ export default function SettingsPage() {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
+                    universalAudioPlayer.stop();
                     if (audioSampleRef.current) {
                       audioSampleRef.current.pause();
-                      setIsPlayingSample(false);
                     }
+                    setIsPlayingSample(false);
                   }}
                   className="h-8 text-xs text-muted-foreground hover:text-foreground gap-1.5"
                 >

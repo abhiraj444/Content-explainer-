@@ -48,6 +48,7 @@ import { compressImagesForAi, prepareImagesForAiPrompt } from '@/lib/image-compr
 import { ImageCompressionOption } from '@/components/ImageCompressionOption';
 import { ClinicalThinkingBox } from '@/components/ClinicalThinkingBox';
 import { ClinicalMarkdownRenderer } from '@/components/ClinicalMarkdownRenderer';
+import { SpeechSynthesisButton } from '@/components/SpeechSynthesisButton';
 import Link from 'next/link';
 
 function ContentGeneratorContent() {
@@ -1539,6 +1540,35 @@ function ContentGeneratorContent() {
                   images={structuredQuestion.images}
                 />
               )}
+
+              {/* Spoken Voice Explanation for Clinical Answer & Rationale */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 sm:p-3.5 rounded-xl border border-primary/20 bg-primary/5">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary shrink-0" />
+                  <div>
+                    <p className="text-xs sm:text-sm font-bold text-foreground">
+                      Clinical Answer &amp; Preceptor Rationale
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Two-stage AI voice explanation: script generated from answer and clinical evidence, then voiced via TTS
+                    </p>
+                  </div>
+                </div>
+                <SpeechSynthesisButton
+                  size="sm"
+                  label="Explain Answer in Voice"
+                  showLabel={true}
+                  showVoiceBadge={true}
+                  className="h-8 px-3 text-xs border-primary/40 font-semibold"
+                  voiceContext={{
+                    type: 'clinical_qa',
+                    title: result.topic || structuredQuestion?.summary || 'Clinical Answer Review',
+                    subtitle: structuredQuestion?.summary,
+                    mainContent: result.answer,
+                    additionalContext: `Clinical Reasoning: ${result.reasoning || ''}\nKey Takeaways: ${(result.keyTakeaways || []).join('. ')}`,
+                  }}
+                />
+              </div>
 
               <ClinicalMarkdownRenderer content={result.answer} />
 

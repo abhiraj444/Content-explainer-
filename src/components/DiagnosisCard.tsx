@@ -100,15 +100,17 @@ export function DiagnosisCard({ diagnosis, onExploreTopic }: DiagnosisCardProps)
           <div className="flex flex-col items-end shrink-0 gap-1.5">
             <div className="flex items-center gap-1.5">
               <SpeechSynthesisButton
-                text={`${diagnosis.diagnosis}. Estimated pre-test clinical likelihood: ${confidencePercent} percent. ${diagnosis.reasoning}`}
                 size="sm"
                 className="h-7 w-7 rounded-md"
-                pedagogicalContext={{
+                voiceContext={{
+                  type: 'diagnosis_item',
                   title: diagnosis.diagnosis,
-                  type: 'diagnosis',
-                  context: `Likelihood: ${confidencePercent}%. Category: ${diagnosis.lifeThreatCategory || 'Differential'}`,
+                  subtitle: `${confidencePercent}% pre-test likelihood (${diagnosis.lifeThreatCategory || 'Differential'})`,
+                  mainContent: diagnosis.reasoning,
+                  additionalContext: `Pathophysiology: ${diagnosis.pathophysiology || ''}\nRed Flags: ${
+                    diagnosis.redFlags?.join(', ') || 'None reported'
+                  }\nRequired Workup: ${diagnosis.missingInformation?.tests?.join(', ') || 'Standard protocol'}`,
                 }}
-                generatePedagogicalScript={true}
               />
               <div className="font-mono font-bold text-sm sm:text-base text-foreground bg-muted/60 px-2.5 py-0.5 rounded-md border border-border">
                 {confidencePercent}%

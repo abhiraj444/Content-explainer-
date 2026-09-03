@@ -222,19 +222,17 @@ export function KnowledgeNodeCard({
           {/* Quick Audio Voice Synthesis Button */}
           {(node.description || hasAnyExplanation) && (
             <SpeechSynthesisButton
-              text={
-                node.explanation?.standard ||
-                node.explanation?.concise ||
-                `${node.title}. ${node.description || ''}`
-              }
               size="sm"
               className="h-7 w-7 rounded-md"
-              pedagogicalContext={{
+              voiceContext={{
+                type: 'knowledge_topic_summary',
                 title: node.title,
-                type: 'knowledge_node',
-                context: node.description || 'Knowledge Map Node',
+                subtitle: node.firstPrincipleAnchor ? `Anchor: ${node.firstPrincipleAnchor}` : undefined,
+                mainContent: node.explanation?.concise || node.explanation?.standard || node.description || node.title,
+                additionalContext: node.firstPrincipleAnchor
+                  ? `First Principle Anchor: ${node.firstPrincipleAnchor}`
+                  : undefined,
               }}
-              generatePedagogicalScript={true}
             />
           )}
 

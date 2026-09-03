@@ -551,24 +551,35 @@ export const EnhancedSlideRenderer: React.FC<EnhancedSlideRendererProps> = ({
 
             <div className="flex items-center gap-2">
               <SpeechSynthesisButton
-                text={`${slide.title}. ${slide.summary || ''}. ${slide.content
-                  .map((c) => (c.type === 'bullet' ? c.text : c.type === 'key-point' ? `Key point: ${c.text}` : c.text || ''))
-                  .join('. ')}. ${
-                  slide.clinicalPearls && slide.clinicalPearls.length > 0
-                    ? `Clinical pearls: ${slide.clinicalPearls.join('. ')}`
-                    : ''
-                }`}
-                label="Read Slide"
+                label="Explain Slide in Voice"
                 showLabel={true}
                 showVoiceBadge={true}
                 size="sm"
-                className="h-7 text-xs"
-                pedagogicalContext={{
-                  title: slide.title,
+                className="h-7 text-xs font-semibold"
+                voiceContext={{
                   type: 'slide',
-                  context: presentationTopic || slide.summary || 'Clinical Teaching Slide',
+                  title: slide.title,
+                  subtitle: slide.summary,
+                  mainContent: [
+                    slide.summary ? `Summary: ${slide.summary}` : '',
+                    ...slide.content.map((c) =>
+                      c.type === 'bullet'
+                        ? `• ${c.text}`
+                        : c.type === 'key-point'
+                        ? `Key Point: ${c.text}`
+                        : c.text || ''
+                    ),
+                    slide.clinicalPearls && slide.clinicalPearls.length > 0
+                      ? `Clinical Pearls: ${slide.clinicalPearls.join('. ')}`
+                      : '',
+                    slide.speakerNotes ? `Presenter Notes: ${slide.speakerNotes}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n'),
+                  additionalContext: presentationTopic
+                    ? `Deck Topic: ${presentationTopic}`
+                    : 'Postgraduate Medical Grand Rounds Lecture Slide',
                 }}
-                generatePedagogicalScript={true}
               />
               <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline">
                 Clinical Teaching Deck

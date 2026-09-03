@@ -214,17 +214,19 @@ export function KnowledgeStudyStage({
             {/* Read Aloud Pedagogical Audio Player */}
             {activeContent && activeTab !== 'notes' && (
               <SpeechSynthesisButton
-                text={activeContent}
                 size="sm"
                 label="Voice Explanation"
                 showLabel={true}
                 showVoiceBadge={true}
-                pedagogicalContext={{
+                voiceContext={{
+                  type: activeTab === 'standard' ? 'knowledge_topic_standard' : 'knowledge_topic_summary',
                   title: node.title,
-                  type: 'knowledge_node',
-                  context: `${lineagePath.join(' > ')} | ${documentSummary || 'Knowledge Map Study Topic'}`,
+                  subtitle: `${activeTab.replace('_', ' ')} (Depth ${node.depth})`,
+                  mainContent: activeContent,
+                  additionalContext: `Lineage: ${lineagePath.join(' > ')}. First-principle: ${
+                    node.firstPrincipleAnchor || ''
+                  }. Document: ${documentSummary || ''}`,
                 }}
-                generatePedagogicalScript={true}
               />
             )}
 
@@ -336,16 +338,34 @@ export function KnowledgeStudyStage({
                       {conciseExplanation.split(/\s+/).filter(Boolean).length} words
                     </Badge>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onExplain(node, 'standard', 'concise')}
-                    disabled={isExplaining}
-                    className="h-6 text-[11px] gap-1 text-sky-700 dark:text-sky-300 hover:bg-sky-500/15"
-                    title="Re-generate concise overview"
-                  >
-                    <RefreshCw className="h-3 w-3" /> Re-generate
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <SpeechSynthesisButton
+                      size="sm"
+                      label="Explain Summary in Voice"
+                      showLabel={true}
+                      showVoiceBadge={true}
+                      className="h-6 text-[11px] border-sky-500/40 text-sky-700 dark:text-sky-300 hover:bg-sky-500/10"
+                      voiceContext={{
+                        type: 'knowledge_topic_summary',
+                        title: node.title,
+                        subtitle: `Concise Summary (Depth ${node.depth})`,
+                        mainContent: conciseExplanation,
+                        additionalContext: `Lineage: ${lineagePath.join(' > ')}. First-principle: ${
+                          node.firstPrincipleAnchor || ''
+                        }`,
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onExplain(node, 'standard', 'concise')}
+                      disabled={isExplaining}
+                      className="h-6 text-[11px] gap-1 text-sky-700 dark:text-sky-300 hover:bg-sky-500/15"
+                      title="Re-generate concise overview"
+                    >
+                      <RefreshCw className="h-3 w-3" /> Re-generate
+                    </Button>
+                  </div>
                 </div>
                 <ClinicalMarkdownRenderer content={conciseExplanation} />
               </div>
@@ -386,6 +406,20 @@ export function KnowledgeStudyStage({
                     <BookOpen className="h-3.5 w-3.5 text-primary" /> Rigorous Clinical / Academic Workup (Full Breakdown)
                   </span>
                   <div className="flex items-center gap-1.5">
+                    <SpeechSynthesisButton
+                      size="sm"
+                      label="Explain Standard Workup in Voice"
+                      showLabel={true}
+                      showVoiceBadge={true}
+                      className="h-6 text-[11px] border-primary/35 font-semibold"
+                      voiceContext={{
+                        type: 'knowledge_topic_standard',
+                        title: node.title,
+                        subtitle: `Standard Academic Workup (Depth ${node.depth})`,
+                        mainContent: standardExplanation,
+                        additionalContext: `Lineage: ${lineagePath.join(' > ')}. Document: ${documentSummary || ''}`,
+                      }}
+                    />
                     {!conciseExplanation && (
                       <Button
                         variant="outline"

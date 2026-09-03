@@ -1292,9 +1292,34 @@ function AiDiagnosisContent() {
                       <Activity className="h-4 w-4 text-primary" />
                       <span>Ranked Differential Diagnoses &amp; Pre-Test Likelihood</span>
                     </h3>
-                    <span className="text-xs text-muted-foreground shrink-0 font-mono">
-                      {results.length} Conditions Analyzed
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <SpeechSynthesisButton
+                        size="sm"
+                        label="Explain Differential in Voice"
+                        showLabel={true}
+                        showVoiceBadge={true}
+                        className="h-7 px-2.5 text-xs border-primary/40 font-semibold"
+                        voiceContext={{
+                          type: 'diagnosis_overall',
+                          title: `Differential Diagnosis Review (${results.length} conditions)`,
+                          subtitle: patientData ? `Patient Presentation: ${patientData.slice(0, 90)}...` : undefined,
+                          mainContent: results
+                            .map(
+                              (d, i) =>
+                                `${i + 1}. ${d.diagnosis} (Estimated pre-test likelihood: ${Math.round(
+                                  d.confidenceLevel * 100
+                                )}%, Category: ${d.lifeThreatCategory || 'Differential'}):\n${d.reasoning}${
+                                  d.redFlags && d.redFlags.length > 0 ? `\nRed Flags: ${d.redFlags.join(', ')}` : ''
+                                }`
+                            )
+                            .join('\n\n'),
+                          additionalContext: `Patient Background: ${patientData}\nClinical Thinking: ${thinkingProcess || ''}`,
+                        }}
+                      />
+                      <span className="text-xs text-muted-foreground shrink-0 font-mono">
+                        {results.length} Conditions
+                      </span>
+                    </div>
                   </div>
                   <div className="space-y-3 w-full max-w-full">
                     {results.map((diag, index) => (
@@ -1320,11 +1345,18 @@ function AiDiagnosisContent() {
                       </CardTitle>
                       <div className="flex items-center gap-1">
                         <SpeechSynthesisButton
-                          text={`${clinicalAnswer?.answer || ''}. Key clinical takeaways: ${(clinicalAnswer?.keyTakeaways || []).join('. ')}`}
-                          label="Listen"
+                          label="Explain Management in Voice"
                           showLabel={true}
+                          showVoiceBadge={true}
                           size="sm"
                           className="h-7 px-2 text-[11px] border-primary/30"
+                          voiceContext={{
+                            type: 'clinical_management',
+                            title: 'Guideline-Directed Management & Synthesis',
+                            subtitle: structuredQuestion?.summary || 'Clinical Synthesis',
+                            mainContent: clinicalAnswer.answer,
+                            additionalContext: `Clinical Reasoning: ${clinicalAnswer.reasoning || ''}\nKey Takeaways: ${(clinicalAnswer.keyTakeaways || []).join('. ')}`,
+                          }}
                         />
                         <Button
                           variant="ghost"
