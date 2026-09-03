@@ -153,6 +153,23 @@ function parseCustomHeaders(headersStr?: string): Record<string, string> {
   return result;
 }
 
+function maskHeaders(headers: Record<string, string>): Record<string, string> {
+  const masked: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const lk = k.toLowerCase();
+    if (lk.includes('key') || lk.includes('auth') || lk.includes('token') || lk.includes('secret')) {
+      if (v.length > 12) {
+        masked[k] = `${v.slice(0, 4)}••••••••${v.slice(-4)}`;
+      } else {
+        masked[k] = '••••••••';
+      }
+    } else {
+      masked[k] = v;
+    }
+  }
+  return masked;
+}
+
 /**
  * Parses custom JSON parameters (string or object) and applies them to the request payload.
  * Setting a key's value to null or undefined in customParams will explicitly delete that key from the target payload.
@@ -192,28 +209,54 @@ export async function performTtsSynthesis(body: any): Promise<{
   audioBase64: string;
   voice?: string;
   sampleRate?: number;
+  requestDetails?: {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body: any;
+  };
 }> {
   const {
     text,
-    provider = 'gemini',
-    voice = 'Kore',
+    provider: rawProvider = 'gemini',
+    voice: rawVoice = 'Kore',
     apiKey: clientApiKey,
-    endpoint,
-    model,
-    speed = 1.0,
+    endpoint: rawEndpoint,
+    model: rawModel,
+    speed: rawSpeed = 1.0,
     language = 'english',
     audioPreference = 'english_indian',
     customFormat = 'auto',
     customHeaders,
     customParams,
-    sarvamLanguage,
+    sarvamLanguage: rawSarvamLang,
   } = body;
 
-  if (!text || typeof text !== 'string' || !text.trim()) {
+  // Parse custom parameters for top-level overrides
+  let parsedCustom: Record<string, any> = {};
+  if (customParams) {
+    if (typeof customParams === 'string' && customParams.trim()) {
+      try {
+        parsedCustom = JSON.parse(customParams.trim());
+      } catch {}
+    } else if (typeof customParams === 'object' && customParams !== null) {
+      parsedCustom = customParams;
+    }
+  }
+
+  const provider = (parsedCustom.provider || rawProvider || 'gemini').toLowerCase();
+  const voice = parsedCustom.voice || parsedCustom.speaker || rawVoice;
+  const model = parsedCustom.model || parsedCustom.model_id || rawModel;
+  const endpoint = parsedCustom.endpoint || parsedCustom.url || rawEndpoint;
+  const speed = parsedCustom.speed !== undefined ? parsedCustom.speed : (parsedCustom.pace !== undefined ? parsedCustom.pace : rawSpeed);
+  const sarvamLanguage = parsedCustom.target_language_code || parsedCustom.sarvamLanguage || rawSarvamLang;
+
+  const resolvedText = parsedCustom.input || parsedCustom.text || text;
+  if (!resolvedText || typeof resolvedText !== 'string' || !resolvedText.trim()) {
     throw new Error('Text content is required for speech synthesis.');
   }
 
-  const cleanText = text.trim();
+  const cleanText = resolvedText.trim();
   const resolvedAudioPref = audioPreference || (language === 'hinglish' ? 'hinglish_indian' : 'english_indian');
   const userHeaders = parseCustomHeaders(customHeaders);
 
@@ -246,6 +289,28 @@ export async function performTtsSynthesis(body: any): Promise<{
     const ttsModelToTry = model || 'gemini-3.1-flash-tts-preview';
     let response: any = null;
     let lastErr: any = null;
+
+    const requestDetails = {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${ttsModelToTry}:generateContent`,
+      method: 'POST',
+      headers: maskHeaders({
+        'Content-Type': 'application/json',
+        'x-goog-api-key': activeGeminiKey,
+        ...userHeaders,
+      }),
+      body: {
+        model: ttsModelToTry,
+        contents: [{ parts: [{ text: spokenPrompt }] }],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: selectedVoice },
+            },
+          },
+        },
+      },
+    };
 
     // Exponential retry for transient rate limits (429/resource_exhausted/503)
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -301,6 +366,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       audioBase64: wavBase64,
       voice: selectedVoice,
       sampleRate: 24000,
+      requestDetails,
     };
   }
 
@@ -330,9 +396,16 @@ export async function performTtsSynthesis(body: any): Promise<{
       input: cleanText,
       voice: resolvedVoice,
       speed: Math.max(0.5, Math.min(2.0, Number(speed) || 1.0)),
-      response_format: 'wav', // Groq Orpheus API strictly requires 'wav'
+      response_format: 'wav',
     };
     applyCustomParams(groqBody, customParams);
+
+    const requestDetails = {
+      url: groqUrl,
+      method: 'POST',
+      headers: maskHeaders(groqHeaders),
+      body: groqBody,
+    };
 
     const response = await fetch(groqUrl, {
       method: 'POST',
@@ -355,6 +428,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
       voice: resolvedVoice,
+      requestDetails,
     };
   }
 
@@ -399,6 +473,13 @@ export async function performTtsSynthesis(body: any): Promise<{
       delete sarvamBody.loudness;
     }
 
+    const requestDetails = {
+      url: sarvamUrl,
+      method: 'POST',
+      headers: maskHeaders(headers),
+      body: sarvamBody,
+    };
+
     const response = await fetch(sarvamUrl, {
       method: 'POST',
       headers,
@@ -420,6 +501,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
       voice: selectedSpeaker,
+      requestDetails,
     };
   }
 
@@ -447,6 +529,13 @@ export async function performTtsSynthesis(body: any): Promise<{
     };
     applyCustomParams(openRouterBody, customParams);
 
+    const requestDetails = {
+      url: openRouterUrl,
+      method: 'POST',
+      headers: maskHeaders(openRouterHeaders),
+      body: openRouterBody,
+    };
+
     const response = await fetch(openRouterUrl, {
       method: 'POST',
       headers: openRouterHeaders,
@@ -467,7 +556,8 @@ export async function performTtsSynthesis(body: any): Promise<{
       mimeType: processed.mimeType,
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
-      voice: voice || 'alloy',
+      voice: openRouterBody.voice || voice || 'alloy',
+      requestDetails,
     };
   }
 
@@ -493,6 +583,13 @@ export async function performTtsSynthesis(body: any): Promise<{
     };
     applyCustomParams(openAiBody, customParams);
 
+    const requestDetails = {
+      url: openAiUrl,
+      method: 'POST',
+      headers: maskHeaders(openAiHeaders),
+      body: openAiBody,
+    };
+
     const response = await fetch(openAiUrl, {
       method: 'POST',
       headers: openAiHeaders,
@@ -513,7 +610,8 @@ export async function performTtsSynthesis(body: any): Promise<{
       mimeType: processed.mimeType,
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
-      voice: voice || 'alloy',
+      voice: openAiBody.voice || voice || 'alloy',
+      requestDetails,
     };
   }
 
@@ -541,6 +639,13 @@ export async function performTtsSynthesis(body: any): Promise<{
     };
     applyCustomParams(elevenBody, customParams);
 
+    const requestDetails = {
+      url: elevenUrl,
+      method: 'POST',
+      headers: maskHeaders(elevenHeaders),
+      body: elevenBody,
+    };
+
     const response = await fetch(elevenUrl, {
       method: 'POST',
       headers: elevenHeaders,
@@ -562,6 +667,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
       voice: voiceId,
+      requestDetails,
     };
   }
 
@@ -597,6 +703,13 @@ export async function performTtsSynthesis(body: any): Promise<{
     }
     applyCustomParams(requestBody, customParams);
 
+    const requestDetails = {
+      url: ttsUrl,
+      method: 'POST',
+      headers: maskHeaders(headers),
+      body: requestBody,
+    };
+
     const response = await fetch(ttsUrl, {
       method: 'POST',
       headers,
@@ -618,6 +731,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
       voice,
+      requestDetails,
     };
   }
 

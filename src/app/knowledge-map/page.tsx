@@ -44,7 +44,7 @@ import { useSettings } from '@/context/SettingsContext';
 import { ModeLanguageSelector } from '@/components/ModeLanguageSelector';
 import { LocalDataService, type LocalCase } from '@/lib/LocalDataService';
 import { ClientSideAiService, formatModelDisplayName } from '@/lib/ClientSideAiService';
-import type { KnowledgeMapData, KnowledgeTreeNode } from '@/types';
+import type { KnowledgeMapData, KnowledgeTreeNode, AudioExplanationData } from '@/types';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { AudioPlayerCard } from '@/components/AudioPlayerCard';
@@ -535,6 +535,29 @@ function KnowledgeMapContent() {
     saveMapToDatabase(updatedMap);
   };
 
+  // Update node audio explanation for persistent voice review
+  const handleUpdateNodeAudio = (nodeId: string, audioData: AudioExplanationData) => {
+    if (!knowledgeMap) return;
+    const updatedTree = updateNodeAudioExplanation(knowledgeMap.tree, nodeId, audioData);
+    const updatedMap: KnowledgeMapData = {
+      ...knowledgeMap,
+      tree: updatedTree,
+    };
+    setKnowledgeMap(updatedMap);
+    saveMapToDatabase(updatedMap);
+  };
+
+  // Update overall document summary audio explanation
+  const handleSummaryAudioGenerated = (audioData: AudioExplanationData) => {
+    if (!knowledgeMap) return;
+    const updatedMap: KnowledgeMapData = {
+      ...knowledgeMap,
+      audioExplanation: audioData,
+    };
+    setKnowledgeMap(updatedMap);
+    saveMapToDatabase(updatedMap);
+  };
+
   // Expand all / Collapse all in tree
   const handleSetAllExpanded = (expanded: boolean) => {
     if (!knowledgeMap) return;
@@ -1005,6 +1028,8 @@ function KnowledgeMapContent() {
                       showLabel={true}
                       showVoiceBadge={true}
                       className="h-7 px-2.5 text-xs border-primary/40 font-semibold"
+                      initialAudio={knowledgeMap.audioExplanation}
+                      onAudioGenerated={handleSummaryAudioGenerated}
                       voiceContext={{
                         type: 'knowledge_map_summary',
                         title: knowledgeMap.title,
@@ -1118,6 +1143,7 @@ function KnowledgeMapContent() {
                         setActiveNodeId(node.id);
                         setMobileActiveTab('study');
                       }}
+                      onUpdateAudio={handleUpdateNodeAudio}
                       isDissectingNodeId={isDissectingNodeId}
                       isExplainingNodeId={isExplainingNodeId}
                     />
@@ -1145,6 +1171,7 @@ function KnowledgeMapContent() {
                 onDissect={handleDissectNode}
                 onExplain={handleExplainNode}
                 onUpdateNotes={handleUpdateNotes}
+                onUpdateAudio={handleUpdateNodeAudio}
                 onStop={handleStopGeneration}
                 isExplaining={Boolean(isExplainingNodeId && isExplainingNodeId === activeNodeId)}
                 isDissecting={Boolean(isDissectingNodeId && isDissectingNodeId === activeNodeId)}
@@ -1184,6 +1211,7 @@ function RecursiveNodeRenderer({
   onDissect,
   onExplain,
   onAddNote,
+  onUpdateAudio,
   isDissectingNodeId,
   isExplainingNodeId,
 }: {
@@ -1195,6 +1223,7 @@ function RecursiveNodeRenderer({
   onDissect: (node: KnowledgeTreeNode) => void;
   onExplain: (node: KnowledgeTreeNode, mode: 'standard' | 'first_principles' | 'simplified', detailLevel?: 'concise' | 'full') => void;
   onAddNote: (node: KnowledgeTreeNode) => void;
+  onUpdateAudio: (nodeId: string, audioData: AudioExplanationData) => void;
   isDissectingNodeId: string | null;
   isExplainingNodeId: string | null;
 }) {
@@ -1214,6 +1243,7 @@ function RecursiveNodeRenderer({
         onDissect={onDissect}
         onExplain={onExplain}
         onAddNote={onAddNote}
+        onUpdateAudio={onUpdateAudio}
         isDissecting={isDissectingNodeId === node.id}
         isExplaining={isExplainingNodeId === node.id}
       />
@@ -1232,6 +1262,7 @@ function RecursiveNodeRenderer({
               onDissect={onDissect}
               onExplain={onExplain}
               onAddNote={onAddNote}
+              onUpdateAudio={onUpdateAudio}
               isDissectingNodeId={isDissectingNodeId}
               isExplainingNodeId={isExplainingNodeId}
             />
@@ -1382,6 +1413,32 @@ function updateNodeUserNotes(
       return {
         ...node,
         children: updateNodeUserNotes(node.children, targetId, notes),
+      };
+    }
+    return node;
+  });
+}
+
+function updateNodeAudioExplanation(
+  tree: KnowledgeTreeNode[],
+  targetId: string,
+  audioData: AudioExplanationData
+): KnowledgeTreeNode[] {
+  return tree.map((node) => {
+    if (node.id === targetId) {
+      return {
+        ...node,
+        audioExplanation: audioData,
+        explanation: {
+          ...(node.explanation || {}),
+          audioExplanation: audioData,
+        },
+      };
+    }
+    if (node.children) {
+      return {
+        ...node,
+        children: updateNodeAudioExplanation(node.children, targetId, audioData),
       };
     }
     return node;

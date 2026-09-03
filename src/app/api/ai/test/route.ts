@@ -155,11 +155,16 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const requestDetails = {
+        const requestDetails = resJson.requestDetails || {
           url: endpoint || (provider === 'groq' ? 'https://api.groq.com/openai/v1/audio/speech' : provider === 'sarvam' ? 'https://api.sarvam.ai/text-to-speech' : 'https://generativelanguage.googleapis.com'),
           method: 'POST',
           headers: maskHeaders(headersObj),
-          body: ttsPayload,
+          body: {
+            model: model || provider,
+            voice: voice,
+            input: promptText,
+            speed: speed,
+          },
         };
 
         if (!ttsRes.ok || !resJson.success) {

@@ -101,6 +101,7 @@ function AiDiagnosisContent() {
   const [followUpStreamText, setFollowUpStreamText] = useState<string>('');
   const [followUpStreamThought, setFollowUpStreamThought] = useState<string>('');
   const [thinkingProcess, setThinkingProcess] = useState<string | undefined>(undefined);
+  const [overallAudioExplanation, setOverallAudioExplanation] = useState<AudioExplanationData | null>(null);
   const loadedCaseIdRef = useRef<string | null>(null);
   const lastDiagStreamUpdateRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -162,6 +163,7 @@ function AiDiagnosisContent() {
             setCaseSummaryForPresentation(caseData.outputData?.caseSummaryForPresentation || '');
             setFollowUpThreads(caseData.outputData?.followUpThreads || []);
             setThinkingProcess(caseData.outputData?.thinkingProcess || undefined);
+            setOverallAudioExplanation(caseData.outputData?.audioExplanation || null);
             if (caseData.outputData?.streamText) {
               setStreamingText(caseData.outputData.streamText);
             }
@@ -691,6 +693,69 @@ function AiDiagnosisContent() {
             ...existingCase.outputData,
             followUpThreads: updatedThreads,
           },
+          updatedAt: Date.now(),
+        });
+      }
+    }
+  };
+
+  const handleOverallAudioGenerated = async (audioData: AudioExplanationData) => {
+    setOverallAudioExplanation(audioData);
+    if (currentCaseId) {
+      const existingCase = await LocalDataService.getCase(currentCaseId);
+      if (existingCase) {
+        await LocalDataService.saveCase({
+          ...existingCase,
+          outputData: {
+            ...existingCase.outputData,
+            audioExplanation: audioData,
+          },
+          updatedAt: Date.now(),
+        });
+      }
+    }
+  };
+
+  const handleDiagnosisAudioGenerated = async (diagIndex: number, audioData: AudioExplanationData) => {
+    if (!results) return;
+    const updated = [...results];
+    updated[diagIndex] = {
+      ...updated[diagIndex],
+      audioExplanation: audioData,
+    };
+    setResults(updated);
+    if (currentCaseId) {
+      const existingCase = await LocalDataService.getCase(currentCaseId);
+      if (existingCase) {
+        await LocalDataService.saveCase({
+          ...existingCase,
+          outputData: {
+            ...existingCase.outputData,
+            diagnoses: updated,
+          },
+          updatedAt: Date.now(),
+        });
+      }
+    }
+  };
+
+  const handleClinicalAnswerAudioGenerated = async (audioData: AudioExplanationData) => {
+    if (!clinicalAnswer) return;
+    const updated: ClinicalAnswerData = {
+      ...clinicalAnswer,
+      audioExplanation: audioData,
+    };
+    setClinicalAnswer(updated);
+    if (currentCaseId) {
+      const existingCase = await LocalDataService.getCase(currentCaseId);
+      if (existingCase) {
+        await LocalDataService.saveCase({
+          ...existingCase,
+          outputData: {
+            ...existingCase.outputData,
+            clinicalAnswer: updated,
+          },
+          updatedAt: Date.now(),
         });
       }
     }
@@ -1315,6 +1380,8 @@ function AiDiagnosisContent() {
                         showLabel={true}
                         showVoiceBadge={true}
                         className="h-7 px-2.5 text-xs border-primary/40 font-semibold"
+                        initialAudio={overallAudioExplanation || undefined}
+                        onAudioGenerated={handleOverallAudioGenerated}
                         voiceContext={{
                           type: 'diagnosis_overall',
                           title: `Differential Diagnosis Review (${results.length} conditions)`,
@@ -1342,6 +1409,7 @@ function AiDiagnosisContent() {
                       <DiagnosisCard
                         key={index}
                         diagnosis={diag}
+                        onAudioGenerated={(audioData) => handleDiagnosisAudioGenerated(index, audioData)}
                         onExploreTopic={(topic) =>
                           router.push(`/content-generator?topic=${encodeURIComponent(topic)}`)
                         }
@@ -1366,6 +1434,8 @@ function AiDiagnosisContent() {
                           showVoiceBadge={true}
                           size="sm"
                           className="h-7 px-2 text-[11px] border-primary/30"
+                          initialAudio={clinicalAnswer.audioExplanation}
+                          onAudioGenerated={handleClinicalAnswerAudioGenerated}
                           voiceContext={{
                             type: 'clinical_management',
                             title: 'Guideline-Directed Management & Synthesis',

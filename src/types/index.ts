@@ -96,6 +96,7 @@ export interface DiagnosisItem {
         tests?: string[];
     };
     lifeThreatCategory?: 'Emergent' | 'Urgent' | 'Secondary';
+    audioExplanation?: AudioExplanationData;
 }
 
 export type ParameterStatus = 'normal' | 'high' | 'low' | 'critical_high' | 'critical_low' | 'abnormal' | 'borderline';
@@ -136,6 +137,7 @@ export interface ClinicalAnswerData {
     keyTakeaways?: string[];
     proactiveQuestions?: string[];
     caseSummaryForPresentation?: string;
+    audioExplanation?: AudioExplanationData;
 }
 
 interface BaseCase {
@@ -160,6 +162,7 @@ export interface DiagnosisCase extends BaseCase {
         caseSummaryForPresentation?: string;
         followUpThreads?: FollowUpThread[];
         thinkingProcess?: string;
+        audioExplanation?: AudioExplanationData;
     };
 }
 
@@ -182,6 +185,7 @@ export interface ContentCase extends BaseCase {
         suggestedTopics?: string[];
         followUpThreads?: FollowUpThread[];
         structuredQuestion?: StructuredQuestion;
+        audioExplanation?: AudioExplanationData;
     };
 }
 
@@ -191,6 +195,7 @@ export interface KnowledgeNodeExplanation {
     firstPrinciples?: string;
     simplified?: string;
     userNotes?: string;
+    audioExplanation?: AudioExplanationData;
     lastUpdated?: number;
 }
 
@@ -204,6 +209,7 @@ export interface KnowledgeTreeNode {
     firstPrincipleAnchor?: string;
     children?: KnowledgeTreeNode[];
     explanation?: KnowledgeNodeExplanation;
+    audioExplanation?: AudioExplanationData;
     isExpanded?: boolean;
     isCustomAdded?: boolean;
     isNewlyDissected?: boolean;
@@ -219,6 +225,7 @@ export interface KnowledgeMapData {
     sourceFileCount?: number;
     createdAt: number;
     updatedAt: number;
+    audioExplanation?: AudioExplanationData;
     tree: KnowledgeTreeNode[];
 }
 
@@ -233,6 +240,7 @@ export interface KnowledgeMapCase extends BaseCase {
         knowledgeMap: KnowledgeMapData;
         totalNodesCount?: number;
         exploredCount?: number;
+        audioExplanation?: AudioExplanationData;
     };
 }
 

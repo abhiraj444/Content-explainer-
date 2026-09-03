@@ -172,20 +172,28 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
     }
 
     try {
+      const resolvedModel = (parsedParamsObj?.model || parsedParamsObj?.model_id || testModel || '').trim();
+      const resolvedEndpoint = (parsedParamsObj?.endpoint || parsedParamsObj?.url || testEndpoint || '').trim();
+      const resolvedVoice = parsedParamsObj?.voice || parsedParamsObj?.speaker || voice;
+      const resolvedSpeed = parsedParamsObj?.speed !== undefined ? parsedParamsObj?.speed : (parsedParamsObj?.pace !== undefined ? parsedParamsObj?.pace : speed);
+      const resolvedFormat = parsedParamsObj?.response_format || parsedParamsObj?.output_audio_codec || customFormat;
+      const resolvedSarvamLang = parsedParamsObj?.target_language_code || parsedParamsObj?.sarvamLanguage || sarvamLanguage;
+      const resolvedPrompt = parsedParamsObj?.input || parsedParamsObj?.text || (Array.isArray(parsedParamsObj?.inputs) ? parsedParamsObj.inputs[0] : null) || testPrompt.trim();
+
       const payload: any = {
         mode,
         provider: providerId,
-        endpoint: testEndpoint.trim(),
-        model: testModel.trim(),
+        endpoint: resolvedEndpoint,
+        model: resolvedModel,
         apiKey: apiKey.trim(),
         customHeaders: testHeaders.trim(),
         customParams: testParams.trim(),
-        prompt: testPrompt.trim(),
-        text: testPrompt.trim(),
-        voice,
-        speed,
-        customFormat,
-        sarvamLanguage,
+        prompt: resolvedPrompt,
+        text: resolvedPrompt,
+        voice: resolvedVoice,
+        speed: resolvedSpeed,
+        customFormat: resolvedFormat,
+        sarvamLanguage: resolvedSarvamLang,
       };
 
       const res = await fetch('/api/ai/test', {
@@ -227,20 +235,34 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
 
   // Save the tested parameters to application settings
   const handleSaveToSettings = () => {
+    let parsedObj: any = {};
+    if (testParams.trim()) {
+      try {
+        parsedObj = JSON.parse(testParams.trim());
+      } catch {}
+    }
+
+    const resolvedModel = (parsedObj.model || parsedObj.model_id || testModel || '').trim();
+    const resolvedEndpoint = (parsedObj.endpoint || parsedObj.url || testEndpoint || '').trim();
+    const resolvedVoice = parsedObj.voice || parsedObj.speaker || voice;
+    const resolvedSpeed = parsedObj.speed !== undefined ? parsedObj.speed : (parsedObj.pace !== undefined ? parsedObj.pace : speed);
+    const resolvedFormat = parsedObj.response_format || parsedObj.output_audio_codec || customFormat;
+    const resolvedSarvamLang = parsedObj.target_language_code || parsedObj.sarvamLanguage || sarvamLanguage;
+
     onSaveParameters({
-      endpoint: testEndpoint.trim(),
-      model: testModel.trim(),
+      endpoint: resolvedEndpoint,
+      model: resolvedModel,
       customHeaders: testHeaders.trim(),
       customParams: testParams.trim(),
-      voice,
-      speed,
-      customFormat,
-      sarvamLanguage,
+      voice: resolvedVoice,
+      speed: resolvedSpeed,
+      customFormat: resolvedFormat,
+      sarvamLanguage: resolvedSarvamLang,
     });
     setHasSaved(true);
     toast({
       title: 'Parameters Saved to App',
-      description: `Custom parameters for ${providerName} saved! All future AI requests across the app will use these settings.`,
+      description: `Parameters for ${providerName} (Model: ${resolvedModel || 'default'}, Voice: ${resolvedVoice || 'default'}) saved! All future AI requests across the app will use these settings.`,
     });
   };
 

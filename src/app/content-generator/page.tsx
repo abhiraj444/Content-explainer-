@@ -1033,6 +1033,27 @@ function ContentGeneratorContent() {
           ...caseData.outputData,
           followUpThreads: updatedThreads,
         };
+        caseData.updatedAt = Date.now();
+        await LocalDataService.saveCase(caseData);
+      }
+    }
+  };
+
+  const handleResultAudioGenerated = async (audioData: AudioExplanationData) => {
+    if (!result) return;
+    const updatedResult = {
+      ...result,
+      audioExplanation: audioData,
+    };
+    setResult(updatedResult);
+    if (currentCaseId) {
+      const caseData = await LocalDataService.getCase(currentCaseId);
+      if (caseData) {
+        caseData.outputData = {
+          ...caseData.outputData,
+          result: updatedResult,
+        };
+        caseData.updatedAt = Date.now();
         await LocalDataService.saveCase(caseData);
       }
     }
@@ -1574,6 +1595,8 @@ function ContentGeneratorContent() {
                   showLabel={true}
                   showVoiceBadge={true}
                   className="h-8 px-3 text-xs border-primary/40 font-semibold"
+                  initialAudio={result.audioExplanation}
+                  onAudioGenerated={handleResultAudioGenerated}
                   voiceContext={{
                     type: 'clinical_qa',
                     title: result.topic || structuredQuestion?.summary || 'Clinical Answer Review',

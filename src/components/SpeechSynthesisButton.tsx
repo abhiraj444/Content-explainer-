@@ -10,8 +10,6 @@ import {
   Sparkles,
   FileText,
   Check,
-  Radio,
-  ChevronDown,
   ChevronUp,
 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -19,7 +17,7 @@ import { useSpeechSynthesis } from '@/hooks/useSpeechSynthesis';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { useSettings } from '@/context/SettingsContext';
 import { ClientSideAiService } from '@/lib/ClientSideAiService';
-import { AudioPlayerService, type AudioPlaybackController, type StreamingAudioController } from '@/lib/AudioPlayerService';
+import { AudioPlayerService, type AudioPlaybackController } from '@/lib/AudioPlayerService';
 import { useToast } from '@/hooks/use-toast';
 import { LocalDataService } from '@/lib/LocalDataService';
 import type { VoiceExplanationContext, VoiceContextType, AudioExplanationData } from '@/types';
@@ -48,7 +46,7 @@ export interface SpeechSynthesisButtonProps {
   onAudioGenerated?: (audioData: AudioExplanationData) => void;
 }
 
-export type VoiceSynthesisStep = 'idle' | 'generating_script' | 'synthesizing_voice' | 'streaming' | 'playing' | 'paused';
+export type VoiceSynthesisStep = 'idle' | 'generating_script' | 'synthesizing_voice' | 'playing' | 'paused';
 
 export function SpeechSynthesisButton({
   text = '',
@@ -76,14 +74,13 @@ export function SpeechSynthesisButton({
     stop: stopBrowserSpeak,
   } = useSpeechSynthesis();
 
-  // Two-Stage Voice Architecture state
+  // Synthesis state
   const [stage, setStage] = useState<VoiceSynthesisStep>('idle');
   const [generatedScript, setGeneratedScript] = useState<string | null>(initialAudio?.script || null);
-  const [streamProgress, setStreamProgress] = useState<{ current: number; total: number; isBuffering?: boolean } | null>(null);
   const [showScriptModal, setShowScriptModal] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
 
-  const playbackControllerRef = useRef<AudioPlaybackController | StreamingAudioController | null>(null);
+  const playbackControllerRef = useRef<AudioPlaybackController | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const activeProvider = ttsSettings?.provider || 'gemini';
@@ -122,18 +119,18 @@ export function SpeechSynthesisButton({
 
   const cacheKey = `${activeProvider}_${activeVoice}_${activeSpeed}_${effectiveAudioPref}_${resolvedContext.type}_${resolvedContext.title}_${effectiveText.slice(0, 80)}`;
 
-  // Populate initial audio if provided
+  // Populate initial audio and script if provided
   useEffect(() => {
     if (initialAudio?.audioBase64 || initialAudio?.audioDataUrl) {
-      const data = initialAudio.audioBase64 || initialAudio.audioDataUrl || '';
+      const data = initialAudio.audioBase64 || (initialAudio.audioDataUrl.includes('base64,') ? initialAudio.audioDataUrl.split('base64,')[1] : initialAudio.audioDataUrl);
       audioSessionCache.set(cacheKey, {
         audioBase64: data,
         mimeType: initialAudio.mimeType || 'audio/wav',
         script: initialAudio.script || effectiveText,
       });
-      if (initialAudio.script) {
-        setGeneratedScript(initialAudio.script);
-      }
+    }
+    if (initialAudio?.script) {
+      setGeneratedScript(initialAudio.script);
     }
   }, [initialAudio, cacheKey, effectiveText]);
 
@@ -141,7 +138,7 @@ export function SpeechSynthesisButton({
     return null;
   }
 
-  const isCurrentActive = stage === 'playing' || stage === 'streaming' || isBrowserSpeaking;
+  const isCurrentActive = stage === 'playing' || isBrowserSpeaking;
   const isCurrentPaused = stage === 'paused' || isBrowserPaused;
   const isBusy = stage === 'generating_script' || stage === 'synthesizing_voice';
 
@@ -159,13 +156,23 @@ export function SpeechSynthesisButton({
     }
     stopBrowserSpeak();
     setStage('idle');
-    setStreamProgress(null);
   };
 
-  // Two-Stage Generation and Streaming Playback Process
-  const handleStartTwoStageSynthesis = async () => {
-    // 1. Check local session cache or Dexie persistent store for instant replay
+  // Generation and Playback Process
+  const handleStartSynthesis = async () => {
+    // 1. Check direct initialAudio or local session cache or Dexie persistent store for instant replay
     let cached = audioSessionCache.get(cacheKey);
+
+    const initialBase64 = initialAudio?.audioBase64 || (initialAudio?.audioDataUrl?.includes('base64,') ? initialAudio.audioDataUrl.split('base64,')[1] : initialAudio?.audioDataUrl);
+    if (!cached && initialBase64) {
+      cached = {
+        audioBase64: initialBase64,
+        mimeType: initialAudio?.mimeType || 'audio/wav',
+        script: initialAudio?.script || generatedScript || effectiveText,
+      };
+      audioSessionCache.set(cacheKey, cached);
+    }
+
     if (!cached) {
       const persisted = await LocalDataService.getAudioCache(cacheKey);
       if (persisted) {
@@ -179,7 +186,9 @@ export function SpeechSynthesisButton({
     }
 
     if (cached) {
-      setGeneratedScript(cached.script);
+      if (cached.script) {
+        setGeneratedScript(cached.script);
+      }
       try {
         const controller = await AudioPlayerService.playBase64(
           cached.audioBase64,
@@ -191,12 +200,10 @@ export function SpeechSynthesisButton({
             onEnded: () => {
               setStage('idle');
               playbackControllerRef.current = null;
-              setStreamProgress(null);
             },
             onError: () => {
               setStage('idle');
               playbackControllerRef.current = null;
-              setStreamProgress(null);
             },
           }
         );
@@ -208,7 +215,7 @@ export function SpeechSynthesisButton({
       }
     }
 
-    // 2. Begin Two-Stage Generation
+    // 2. Begin Generation
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -216,7 +223,7 @@ export function SpeechSynthesisButton({
       let scriptToSpeak = generatedScript;
 
       // STAGE 1: Main LLM Call to generate natural spoken script
-      if (!scriptToSpeak) {
+      if (!scriptToSpeak && generatePedagogicalScript) {
         setStage('generating_script');
         try {
           const generated = await ClientSideAiService.generateSpokenScript(
@@ -236,6 +243,8 @@ export function SpeechSynthesisButton({
           scriptToSpeak = effectiveText.replace(/[*#`_~\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
           setGeneratedScript(scriptToSpeak);
         }
+      } else if (!scriptToSpeak) {
+        scriptToSpeak = effectiveText;
       }
 
       if (controller.signal.aborted) return;
@@ -248,131 +257,11 @@ export function SpeechSynthesisButton({
         return;
       }
 
-      // STAGE 2: STREAMING AUDIO GENERATION AND PLAYBACK
+      // STAGE 2: SINGLE-SHOT TTS AUDIO SYNTHESIS AND PLAYBACK
       setStage('synthesizing_voice');
 
-      const collectedAudioBlobs: { base64: string; mimeType: string }[] = [];
-      let streamingAudioController: StreamingAudioController | null = null;
-
-      // Initialize Streaming Player Controller
-      streamingAudioController = AudioPlayerService.playStreaming(activeSpeed, {
-        onPlay: () => setStage('streaming'),
-        onPause: () => setStage('paused'),
-        onBufferingChange: (buffering) => {
-          setStreamProgress((prev) => (prev ? { ...prev, isBuffering: buffering } : null));
-        },
-        onChunkChange: (chunkIndex, total) => {
-          setStreamProgress({ current: chunkIndex + 1, total, isBuffering: false });
-        },
-        onEnded: () => {
-          setStage('idle');
-          playbackControllerRef.current = null;
-          setStreamProgress(null);
-        },
-        onError: (err) => {
-          console.warn('Streaming playback error:', err);
-        },
-      });
-
-      playbackControllerRef.current = streamingAudioController;
-
-      // Connect to SSE Stream endpoint
-      let hasReceivedFirstAudioChunk = false;
-
-      await ClientSideAiService.synthesizeSpeechStream(
-        aiConfig,
-        {
-          text: scriptToSpeak || effectiveText,
-          provider: activeProvider,
-          voice: activeVoice,
-          speed: activeSpeed,
-          endpoint: ttsSettings?.endpoint,
-          apiKey: ttsSettings?.apiKey,
-          model: ttsSettings?.model,
-          language: resolvedContext.language || 'english',
-          audioPreference: effectiveAudioPref,
-          signal: controller.signal,
-        },
-        {
-          onInit: (initData) => {
-            setStreamProgress({ current: 0, total: initData.totalChunks, isBuffering: true });
-          },
-          onChunk: (chunk) => {
-            if (controller.signal.aborted) return;
-            hasReceivedFirstAudioChunk = true;
-            collectedAudioBlobs.push({ base64: chunk.audioBase64, mimeType: chunk.mimeType });
-            
-            // Feed immediately into gapless queue
-            streamingAudioController?.feedChunk(chunk.audioBase64, chunk.mimeType);
-            setStage('streaming');
-          },
-          onDone: (doneData) => {
-            streamingAudioController?.markStreamComplete();
-
-            // Assemble and persist the full cached audio
-            if (collectedAudioBlobs.length > 0) {
-              const primaryChunk = collectedAudioBlobs[0];
-              audioSessionCache.set(cacheKey, {
-                audioBase64: primaryChunk.base64,
-                mimeType: primaryChunk.mimeType,
-                script: scriptToSpeak || effectiveText,
-              });
-
-              LocalDataService.saveAudioCache({
-                id: cacheKey,
-                audioBase64: primaryChunk.base64,
-                audioDataUrl: `data:${primaryChunk.mimeType};base64,${primaryChunk.base64}`,
-                mimeType: primaryChunk.mimeType,
-                script: scriptToSpeak || effectiveText,
-                voice: activeVoice,
-                provider: activeProvider,
-                audioPreference: effectiveAudioPref,
-              }).catch(() => null);
-
-              if (onAudioGenerated) {
-                onAudioGenerated({
-                  audioDataUrl: `data:${primaryChunk.mimeType};base64,${primaryChunk.base64}`,
-                  audioBase64: primaryChunk.base64,
-                  mimeType: primaryChunk.mimeType,
-                  script: scriptToSpeak || effectiveText,
-                  voice: activeVoice,
-                  provider: activeProvider,
-                  audioPreference: effectiveAudioPref,
-                  timestamp: Date.now(),
-                });
-              }
-            }
-          },
-          onChunkError: (chunkErr) => {
-            console.warn('Individual TTS chunk error:', chunkErr);
-          },
-          onError: (streamErr) => {
-            console.warn('TTS streaming encountered error:', streamErr);
-            if (!hasReceivedFirstAudioChunk) {
-              // If stream completely failed before playing anything, fallback to single-shot TTS
-              fallbackToSingleShotTts(scriptToSpeak || effectiveText, controller.signal);
-            }
-          },
-        }
-      );
-    } catch (err: any) {
-      if (err?.name === 'AbortError' || controller.signal.aborted) {
-        setStage('idle');
-        return;
-      }
-      console.warn('Streaming voice synthesis encountered issue, switching to fallback:', err);
-      fallbackToSingleShotTts(generatedScript || effectiveText, controller.signal);
-    } finally {
-      abortControllerRef.current = null;
-    }
-  };
-
-  // Fallback single-shot synthesis if stream fails
-  const fallbackToSingleShotTts = async (scriptToSpeak: string, signal: AbortSignal) => {
-    try {
-      setStage('synthesizing_voice');
       const ttsResult = await ClientSideAiService.synthesizeSpeech(aiConfig, {
-        text: scriptToSpeak,
+        text: scriptToSpeak || effectiveText,
         provider: activeProvider,
         voice: activeVoice,
         speed: activeSpeed,
@@ -381,17 +270,49 @@ export function SpeechSynthesisButton({
         model: ttsSettings?.model,
         language: resolvedContext.language || 'english',
         audioPreference: effectiveAudioPref,
-        signal,
+        signal: controller.signal,
       });
 
-      if (signal.aborted) return;
+      if (controller.signal.aborted) return;
 
       const audioData = ttsResult?.audioBase64 || ttsResult?.audioDataUrl;
       const mimeType = ttsResult?.mimeType || 'audio/wav';
 
       if (audioData) {
+        // Save in cache
+        const cleanBase64 = audioData.includes('base64,') ? audioData.split('base64,')[1] : audioData;
+        audioSessionCache.set(cacheKey, {
+          audioBase64: cleanBase64,
+          mimeType,
+          script: scriptToSpeak || effectiveText,
+        });
+
+        LocalDataService.saveAudioCache({
+          id: cacheKey,
+          audioBase64: cleanBase64,
+          audioDataUrl: `data:${mimeType};base64,${cleanBase64}`,
+          mimeType,
+          script: scriptToSpeak || effectiveText,
+          voice: activeVoice,
+          provider: activeProvider,
+          audioPreference: effectiveAudioPref,
+        }).catch(() => null);
+
+        if (onAudioGenerated) {
+          onAudioGenerated({
+            audioDataUrl: `data:${mimeType};base64,${cleanBase64}`,
+            audioBase64: cleanBase64,
+            mimeType,
+            script: scriptToSpeak || effectiveText,
+            voice: activeVoice,
+            provider: activeProvider,
+            audioPreference: effectiveAudioPref,
+            timestamp: Date.now(),
+          });
+        }
+
         const playback = await AudioPlayerService.playBase64(
-          audioData,
+          cleanBase64,
           mimeType,
           activeSpeed,
           {
@@ -400,25 +321,30 @@ export function SpeechSynthesisButton({
             onEnded: () => {
               setStage('idle');
               playbackControllerRef.current = null;
-              setStreamProgress(null);
             },
             onError: () => {
               setStage('idle');
               playbackControllerRef.current = null;
-              toggleBrowserSpeak(scriptToSpeak);
+              toggleBrowserSpeak(scriptToSpeak || effectiveText);
             },
           }
         );
         playbackControllerRef.current = playback;
         setStage('playing');
       } else {
-        toggleBrowserSpeak(scriptToSpeak);
+        toggleBrowserSpeak(scriptToSpeak || effectiveText);
         setStage('playing');
       }
-    } catch (fallbackErr) {
-      console.warn('Fallback single-shot also failed, using browser speech:', fallbackErr);
-      toggleBrowserSpeak(scriptToSpeak);
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        setStage('idle');
+        return;
+      }
+      console.warn('Voice synthesis encountered issue, using browser speech fallback:', err);
+      toggleBrowserSpeak(generatedScript || effectiveText);
       setStage('idle');
+    } finally {
+      abortControllerRef.current = null;
     }
   };
 
@@ -432,7 +358,7 @@ export function SpeechSynthesisButton({
     }
 
     // If already playing AI audio -> Toggle Pause / Resume
-    if (stage === 'playing' || stage === 'streaming') {
+    if (stage === 'playing') {
       if (playbackControllerRef.current) {
         playbackControllerRef.current.pause();
         setStage('paused');
@@ -443,13 +369,13 @@ export function SpeechSynthesisButton({
     if (stage === 'paused') {
       if (playbackControllerRef.current) {
         await playbackControllerRef.current.resume();
-        setStage(streamProgress ? 'streaming' : 'playing');
+        setStage('playing');
       }
       return;
     }
 
-    // Start fresh Two-Stage process with live streaming
-    await handleStartTwoStageSynthesis();
+    // Start fresh synthesis
+    await handleStartSynthesis();
   };
 
   const handleCopyScript = (e: React.MouseEvent) => {
@@ -485,9 +411,7 @@ export function SpeechSynthesisButton({
                   stage === 'generating_script'
                     ? 'AI generating spoken explanation script'
                     : stage === 'synthesizing_voice'
-                    ? 'Connecting to live TTS audio stream'
-                    : stage === 'streaming'
-                    ? 'Streaming voice explanation live'
+                    ? 'Synthesizing voice audio'
                     : isCurrentActive
                     ? isCurrentPaused
                       ? 'Resume voice reading'
@@ -503,8 +427,7 @@ export function SpeechSynthesisButton({
                   </div>
                 ) : stage === 'synthesizing_voice' ? (
                   <div className="flex items-center gap-1 text-primary">
-                    <Radio className="h-3.5 w-3.5 animate-pulse text-primary" />
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                   </div>
                 ) : isCurrentActive ? (
                   isCurrentPaused ? (
@@ -526,11 +449,7 @@ export function SpeechSynthesisButton({
                     {stage === 'generating_script'
                       ? 'Step 1/2: Crafting Script...'
                       : stage === 'synthesizing_voice'
-                      ? 'Step 2/2: Starting Stream...'
-                      : stage === 'streaming'
-                      ? streamProgress && streamProgress.total > 1
-                        ? `Live Audio (${streamProgress.current}/${streamProgress.total})`
-                        : 'Live Audio Stream'
+                      ? 'Step 2/2: Synthesizing Audio...'
                       : isCurrentActive
                       ? isCurrentPaused
                         ? 'Paused'
@@ -587,9 +506,7 @@ export function SpeechSynthesisButton({
               {stage === 'generating_script'
                 ? 'Phase 1: Main AI LLM creating natural spoken explanation script...'
                 : stage === 'synthesizing_voice'
-                ? `Phase 2: Connecting to live audio stream with ${activeProvider.toUpperCase()} (${activeVoice} voice)...`
-                : stage === 'streaming'
-                ? `Live streaming TTS from ${activeProvider.toUpperCase()} (${activeVoice} voice)...`
+                ? `Phase 2: Synthesizing speech with ${activeProvider.toUpperCase()} (${activeVoice} voice)...`
                 : isCurrentActive
                 ? isCurrentPaused
                   ? 'Click to resume AI voice explanation'

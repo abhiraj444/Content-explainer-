@@ -321,7 +321,7 @@ export const EnhancedSlideRenderer: React.FC<EnhancedSlideRendererProps> = ({
   // In-slide Q&A state
   const [slideQuestion, setSlideQuestion] = useState('');
   const [isAskingSlide, setIsAskingSlide] = useState(false);
-  const [slideAnswers, setSlideAnswers] = useState<Array<{ q: string; a: string; reasoning?: string }>>(
+  const [slideAnswers, setSlideAnswers] = useState<Array<{ q: string; a: string; reasoning?: string; audioExplanation?: any }>>(
     slide.discussions || []
   );
 
@@ -331,6 +331,21 @@ export const EnhancedSlideRenderer: React.FC<EnhancedSlideRendererProps> = ({
       setShowSlideChat(true);
     }
   }, [slide.discussions]);
+
+  const handleUpdateDiscussionItemAudio = (itemIndex: number, audioData: any) => {
+    const updated = [...slideAnswers];
+    updated[itemIndex] = {
+      ...updated[itemIndex],
+      audioExplanation: audioData,
+    };
+    setSlideAnswers(updated);
+    if (onUpdateSlide) {
+      onUpdateSlide({
+        ...slide,
+        discussions: updated,
+      });
+    }
+  };
   const [streamLiveAnswer, setStreamLiveAnswer] = useState('');
   const [streamLiveThinking, setStreamLiveThinking] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -556,6 +571,15 @@ export const EnhancedSlideRenderer: React.FC<EnhancedSlideRendererProps> = ({
                 showVoiceBadge={true}
                 size="sm"
                 className="h-7 text-xs font-semibold"
+                initialAudio={slide.audioExplanation}
+                onAudioGenerated={(audioData) => {
+                  if (onUpdateSlide) {
+                    onUpdateSlide({
+                      ...slide,
+                      audioExplanation: audioData,
+                    });
+                  }
+                }}
                 voiceContext={{
                   type: 'slide',
                   title: slide.title,
@@ -744,10 +768,24 @@ export const EnhancedSlideRenderer: React.FC<EnhancedSlideRendererProps> = ({
 
                 {slideAnswers.map((item, i) => (
                   <div key={i} className="rounded-lg bg-card p-3.5 space-y-2.5 border border-border shadow-2xs">
-                    <p className="font-bold text-foreground flex items-start gap-1.5 text-xs sm:text-sm">
-                      <span className="text-primary font-mono font-bold shrink-0">Q:</span>
-                      <span>{item.q}</span>
-                    </p>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-bold text-foreground flex items-start gap-1.5 text-xs sm:text-sm">
+                        <span className="text-primary font-mono font-bold shrink-0">Q:</span>
+                        <span>{item.q}</span>
+                      </p>
+                      <SpeechSynthesisButton
+                        size="sm"
+                        className="h-6 w-6 rounded-md shrink-0"
+                        initialAudio={item.audioExplanation}
+                        onAudioGenerated={(audioData) => handleUpdateDiscussionItemAudio(i, audioData)}
+                        voiceContext={{
+                          type: 'slide_qa',
+                          title: item.q,
+                          mainContent: item.a,
+                          additionalContext: item.reasoning ? `Rationale: ${item.reasoning}` : undefined,
+                        }}
+                      />
+                    </div>
                     <div className="text-foreground text-xs leading-relaxed border-l-2 border-primary/70 pl-3">
                       <ClinicalMarkdownRenderer content={item.a} />
                     </div>

@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import type { KnowledgeTreeNode } from '@/types';
+import type { KnowledgeTreeNode, AudioExplanationData } from '@/types';
 import ClinicalMarkdownRenderer, { InlineMarkdownRenderer } from './ClinicalMarkdownRenderer';
 import { SpeechSynthesisButton } from './SpeechSynthesisButton';
 import { VoiceInputButton } from './VoiceInputButton';
@@ -40,6 +40,7 @@ interface KnowledgeStudyStageProps {
   onDissect: (node: KnowledgeTreeNode) => void;
   onExplain: (node: KnowledgeTreeNode, mode: 'standard' | 'first_principles' | 'simplified', detailLevel?: 'concise' | 'full') => void;
   onUpdateNotes: (nodeId: string, notes: string) => void;
+  onUpdateAudio?: (nodeId: string, audioData: AudioExplanationData) => void;
   onStop?: () => void;
   isExplaining?: boolean;
   isDissecting?: boolean;
@@ -59,6 +60,7 @@ export function KnowledgeStudyStage({
   onDissect,
   onExplain,
   onUpdateNotes,
+  onUpdateAudio,
   onStop,
   isExplaining = false,
   isDissecting = false,
@@ -218,6 +220,12 @@ export function KnowledgeStudyStage({
                 label="Voice Explanation"
                 showLabel={true}
                 showVoiceBadge={true}
+                initialAudio={node.audioExplanation || node.explanation?.audioExplanation}
+                onAudioGenerated={(audioData) => {
+                  if (onUpdateAudio) {
+                    onUpdateAudio(node.id, audioData);
+                  }
+                }}
                 voiceContext={{
                   type: activeTab === 'standard' ? 'knowledge_topic_standard' : 'knowledge_topic_summary',
                   title: node.title,

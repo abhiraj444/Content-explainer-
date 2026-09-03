@@ -1,6 +1,6 @@
 'use client';
 
-import type { DiagnosisItem } from '@/types';
+import type { DiagnosisItem, AudioExplanationData } from '@/types';
 import {
   Card,
   CardContent,
@@ -28,9 +28,10 @@ import { SpeechSynthesisButton } from '@/components/SpeechSynthesisButton';
 interface DiagnosisCardProps {
   diagnosis: DiagnosisItem;
   onExploreTopic?: (topic: string) => void;
+  onAudioGenerated?: (audioData: AudioExplanationData) => void;
 }
 
-export function DiagnosisCard({ diagnosis, onExploreTopic }: DiagnosisCardProps) {
+export function DiagnosisCard({ diagnosis, onExploreTopic, onAudioGenerated }: DiagnosisCardProps) {
   const confidencePercent = Math.round(diagnosis.confidenceLevel * 100);
 
   const getConfidenceColor = (level: number) => {
@@ -102,6 +103,8 @@ export function DiagnosisCard({ diagnosis, onExploreTopic }: DiagnosisCardProps)
               <SpeechSynthesisButton
                 size="sm"
                 className="h-7 w-7 rounded-md"
+                initialAudio={diagnosis.audioExplanation}
+                onAudioGenerated={onAudioGenerated}
                 voiceContext={{
                   type: 'diagnosis_item',
                   title: diagnosis.diagnosis,

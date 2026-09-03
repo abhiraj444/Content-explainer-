@@ -20,7 +20,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { KnowledgeTreeNode } from '@/types';
+import type { KnowledgeTreeNode, AudioExplanationData } from '@/types';
 import { InlineMarkdownRenderer } from '@/components/ClinicalMarkdownRenderer';
 import { SpeechSynthesisButton } from '@/components/SpeechSynthesisButton';
 
@@ -33,6 +33,7 @@ interface KnowledgeNodeCardProps {
   onDissect: (node: KnowledgeTreeNode) => void;
   onExplain: (node: KnowledgeTreeNode, mode: 'standard' | 'first_principles' | 'simplified', detailLevel?: 'concise' | 'full') => void;
   onAddNote: (node: KnowledgeTreeNode) => void;
+  onUpdateAudio?: (nodeId: string, audioData: AudioExplanationData) => void;
   isDissecting?: boolean;
   isExplaining?: boolean;
 }
@@ -46,6 +47,7 @@ export function KnowledgeNodeCard({
   onDissect,
   onExplain,
   onAddNote,
+  onUpdateAudio,
   isDissecting = false,
   isExplaining = false,
 }: KnowledgeNodeCardProps) {
@@ -224,6 +226,12 @@ export function KnowledgeNodeCard({
             <SpeechSynthesisButton
               size="sm"
               className="h-7 w-7 rounded-md"
+              initialAudio={node.audioExplanation || node.explanation?.audioExplanation}
+              onAudioGenerated={(audioData) => {
+                if (onUpdateAudio) {
+                  onUpdateAudio(node.id, audioData);
+                }
+              }}
               voiceContext={{
                 type: 'knowledge_topic_summary',
                 title: node.title,
