@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
 import type { AiProvider, AiConfig, SttProvider, SttConfig, TtsProvider, TtsSettings, CustomTtsFormat, TtsAudioPreference } from '@/types';
 import { KNOWN_TTS_PROVIDERS } from '@/lib/tts-voices';
+import { resolveOverrides } from '@/lib/api-param-utils';
 
 export type TargetLanguage = 'english' | 'hinglish';
 export type AudienceMode = 'doctor' | 'simplified';
@@ -282,11 +283,15 @@ interface SettingsContextType {
     setEnableLiveThinking: (enabled: boolean) => void;
     enableReasoning: boolean;
     setEnableReasoning: (enabled: boolean) => void;
+
+    // Initialization flag indicating localStorage sync has completed
+    isSettingsLoaded: boolean;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+    const [isSettingsLoaded, setIsSettingsLoaded] = useState<boolean>(false);
     const [aiProvider, setAiProviderInternal] = useState<AiProvider>('gemini');
     const [geminiApiKey, setGeminiApiKeyInternal] = useState<string>('');
     const [geminiModel, setGeminiModelInternal] = useState<string>(DEFAULT_GEMINI_MODEL);
@@ -596,6 +601,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             }
         } catch {
             // Keep default initial models
+        } finally {
+            setIsSettingsLoaded(true);
         }
     }, []);
 
@@ -754,6 +761,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const setCustomParams = (params: string) => {
         localStorage.setItem('app_custom_params', params);
         setCustomParamsInternal(params);
+
+        // Synchronize recognized canonical parameters so editing JSON reflects in UI immediately
+        const { overrides } = resolveOverrides(params);
+        if (overrides.model) {
+            if (aiProvider === 'gemini') {
+                setGeminiModelInternal(overrides.model);
+                localStorage.setItem('app_gemini_model', overrides.model);
+            } else {
+                setCustomModelInternal(overrides.model);
+                localStorage.setItem('app_custom_model', overrides.model);
+            }
+        }
+        if (overrides.endpoint) {
+            setCustomEndpointInternal(overrides.endpoint);
+            localStorage.setItem('app_custom_endpoint', overrides.endpoint);
+        }
+        if (overrides.apiKey) {
+            setCustomApiKeyInternal(overrides.apiKey);
+            localStorage.setItem('app_custom_api_key', overrides.apiKey);
+        }
     };
 
     const setSttProvider = (provider: SttProvider, autoLoadKey: boolean = true) => {
@@ -837,6 +864,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const setSttCustomParams = (params: string) => {
         localStorage.setItem('app_stt_custom_params', params);
         setSttCustomParamsInternal(params);
+
+        // Synchronize canonical overrides
+        const { overrides } = resolveOverrides(params);
+        if (overrides.model) {
+            setSttModelInternal(overrides.model);
+            localStorage.setItem('app_stt_model', overrides.model);
+        }
+        if (overrides.endpoint) {
+            setSttEndpointInternal(overrides.endpoint);
+            localStorage.setItem('app_stt_endpoint', overrides.endpoint);
+        }
     };
 
     const setTtsProvider = (provider: TtsProvider, autoLoadKey: boolean = true) => {
@@ -941,6 +979,29 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const setTtsCustomParams = (params: string) => {
         localStorage.setItem('app_tts_custom_params', params);
         setTtsCustomParamsInternal(params);
+
+        // Synchronize recognized canonical parameters so editing JSON reflects in UI immediately
+        const { overrides } = resolveOverrides(params);
+        if (overrides.voice) {
+            setTtsVoiceInternal(overrides.voice);
+            localStorage.setItem('app_tts_voice', overrides.voice);
+        }
+        if (overrides.model) {
+            setTtsModelInternal(overrides.model);
+            localStorage.setItem('app_tts_model', overrides.model);
+        }
+        if (overrides.endpoint) {
+            setTtsEndpointInternal(overrides.endpoint);
+            localStorage.setItem('app_tts_endpoint', overrides.endpoint);
+        }
+        if (overrides.speed !== undefined) {
+            setTtsSpeedInternal(overrides.speed);
+            localStorage.setItem('app_tts_speed', String(overrides.speed));
+        }
+        if (overrides.sarvamLanguage) {
+            setTtsSarvamLanguageInternal(overrides.sarvamLanguage);
+            localStorage.setItem('app_tts_sarvam_language', overrides.sarvamLanguage);
+        }
     };
 
     const setTtsSarvamLanguage = (lang: string) => {
@@ -1226,6 +1287,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 setEnableLiveThinking,
                 enableReasoning,
                 setEnableReasoning,
+                isSettingsLoaded,
             }}
         >
             {children}

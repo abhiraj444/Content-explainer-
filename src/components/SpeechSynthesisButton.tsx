@@ -11,6 +11,7 @@ import {
   FileText,
   Check,
   ChevronUp,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { useSpeechSynthesis } from '@/hooks/useSpeechSynthesis';
@@ -118,8 +119,9 @@ export function SpeechSynthesisButton({
   };
 
   const cacheKey = `${activeProvider}_${activeVoice}_${activeSpeed}_${effectiveAudioPref}_${resolvedContext.type}_${resolvedContext.title}_${effectiveText.slice(0, 80)}`;
+  const scriptCacheKey = `script_${resolvedContext.type}_${(resolvedContext.title || '').slice(0, 40)}_${effectiveText.slice(0, 80)}`;
 
-  // Populate initial audio and script if provided
+  // Populate initial audio and script if provided, or restore previously generated script from Dexie
   useEffect(() => {
     if (initialAudio?.audioBase64 || initialAudio?.audioDataUrl) {
       const data = initialAudio.audioBase64 || (initialAudio.audioDataUrl.includes('base64,') ? initialAudio.audioDataUrl.split('base64,')[1] : initialAudio.audioDataUrl);
@@ -131,8 +133,31 @@ export function SpeechSynthesisButton({
     }
     if (initialAudio?.script) {
       setGeneratedScript(initialAudio.script);
+      audioSessionCache.set(scriptCacheKey, {
+        audioBase64: '',
+        mimeType: 'text/plain',
+        script: initialAudio.script,
+      });
+    } else {
+      // Check in-memory session cache first
+      const memScript = audioSessionCache.get(scriptCacheKey)?.script;
+      if (memScript) {
+        setGeneratedScript(memScript);
+      } else {
+        // Asynchronously restore from Dexie persistent storage
+        LocalDataService.getScriptCache(scriptCacheKey).then((persistedScript) => {
+          if (persistedScript) {
+            setGeneratedScript(persistedScript);
+            audioSessionCache.set(scriptCacheKey, {
+              audioBase64: '',
+              mimeType: 'text/plain',
+              script: persistedScript,
+            });
+          }
+        }).catch(() => null);
+      }
     }
-  }, [initialAudio, cacheKey, effectiveText]);
+  }, [initialAudio, cacheKey, scriptCacheKey, effectiveText]);
 
   if (!effectiveText && !voiceContext && !initialAudio) {
     return null;
@@ -159,7 +184,7 @@ export function SpeechSynthesisButton({
   };
 
   // Generation and Playback Process
-  const handleStartSynthesis = async () => {
+  const handleStartSynthesis = async (forceRegenerateScript = false) => {
     // 1. Check direct initialAudio or local session cache or Dexie persistent store for instant replay
     let cached = audioSessionCache.get(cacheKey);
 
@@ -175,17 +200,18 @@ export function SpeechSynthesisButton({
 
     if (!cached) {
       const persisted = await LocalDataService.getAudioCache(cacheKey);
-      if (persisted) {
+      if (persisted && persisted.audioBase64) {
         cached = {
           audioBase64: persisted.audioBase64,
-          mimeType: persisted.mimeType,
+          mimeType: persisted.mimeType || 'audio/wav',
           script: persisted.script,
         };
         audioSessionCache.set(cacheKey, cached);
       }
     }
 
-    if (cached) {
+    // If audio is already synthesized and cached, play it immediately
+    if (cached && cached.audioBase64 && !forceRegenerateScript) {
       if (cached.script) {
         setGeneratedScript(cached.script);
       }
@@ -220,9 +246,18 @@ export function SpeechSynthesisButton({
     abortControllerRef.current = controller;
 
     try {
-      let scriptToSpeak = generatedScript;
+      let scriptToSpeak = forceRegenerateScript ? null : generatedScript;
 
-      // STAGE 1: Main LLM Call to generate natural spoken script
+      // If we don't have a script in state, check Dexie persistent storage
+      if (!scriptToSpeak && !forceRegenerateScript) {
+        const savedInDexie = await LocalDataService.getScriptCache(scriptCacheKey);
+        if (savedInDexie) {
+          scriptToSpeak = savedInDexie;
+          setGeneratedScript(savedInDexie);
+        }
+      }
+
+      // STAGE 1: Main LLM Call to generate natural spoken script if not already present
       if (!scriptToSpeak && generatePedagogicalScript) {
         setStage('generating_script');
         try {
@@ -233,7 +268,6 @@ export function SpeechSynthesisButton({
           );
           if (generated && generated.trim()) {
             scriptToSpeak = generated.trim();
-            setGeneratedScript(scriptToSpeak);
           } else {
             scriptToSpeak = effectiveText;
           }
@@ -241,7 +275,31 @@ export function SpeechSynthesisButton({
           if (controller.signal.aborted) return;
           console.warn('Stage 1 LLM script generation fallback:', llmErr);
           scriptToSpeak = effectiveText.replace(/[*#`_~\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+
+        // CRITICAL: Persist script immediately to Dexie so it is NEVER lost even if audio generation fails
+        if (scriptToSpeak) {
           setGeneratedScript(scriptToSpeak);
+          audioSessionCache.set(scriptCacheKey, {
+            audioBase64: '',
+            mimeType: 'text/plain',
+            script: scriptToSpeak,
+          });
+          LocalDataService.saveScriptCache(scriptCacheKey, scriptToSpeak, {
+            voice: activeVoice,
+            provider: activeProvider,
+            audioPreference: effectiveAudioPref,
+          }).catch(() => null);
+
+          if (onAudioGenerated) {
+            onAudioGenerated({
+              script: scriptToSpeak,
+              voice: activeVoice,
+              provider: activeProvider,
+              audioPreference: effectiveAudioPref,
+              timestamp: Date.now(),
+            });
+          }
         }
       } else if (!scriptToSpeak) {
         scriptToSpeak = effectiveText;
@@ -344,14 +402,31 @@ export function SpeechSynthesisButton({
       const errorMsg = err?.message || 'AI speech synthesis encountered an error';
       toast({
         title: 'AI Voice Warning',
-        description: `${errorMsg}. Playing with browser speech.`,
+        description: `${errorMsg}. Script preserved locally. Playing with browser speech.`,
         variant: 'destructive',
       });
+      // Spoken script is preserved, use it to speak with browser speech
       toggleBrowserSpeak(generatedScript || effectiveText);
       setStage('idle');
     } finally {
       abortControllerRef.current = null;
     }
+  };
+
+  // Explicitly regenerate the script and generate fresh audio
+  const handleRegenerateScript = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    handleStop();
+    setGeneratedScript(null);
+    audioSessionCache.delete(cacheKey);
+    audioSessionCache.delete(scriptCacheKey);
+    await LocalDataService.deleteAudioCache(cacheKey);
+    await LocalDataService.deleteAudioCache(scriptCacheKey);
+    toast({
+      title: 'Regenerating Spoken Script',
+      description: 'Generating fresh AI explanation...',
+    });
+    await handleStartSynthesis(true);
   };
 
   const handleClick = async (e: React.MouseEvent) => {
@@ -380,8 +455,8 @@ export function SpeechSynthesisButton({
       return;
     }
 
-    // Start fresh synthesis
-    await handleStartSynthesis();
+    // Start synthesis (will use existing script if already saved!)
+    await handleStartSynthesis(false);
   };
 
   const handleCopyScript = (e: React.MouseEvent) => {
@@ -556,9 +631,40 @@ export function SpeechSynthesisButton({
           <div className="mt-2 text-xs leading-relaxed text-muted-foreground font-sans max-h-48 overflow-y-auto pr-1 whitespace-pre-wrap">
             {generatedScript}
           </div>
-          <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-            <span>TTS Model: {activeProvider.toUpperCase()}</span>
-            <span>Voice: {activeVoice}</span>
+          <div className="mt-2.5 pt-2 border-t border-border/40 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-sans font-semibold">
+                <Check className="h-2.5 w-2.5" /> Saved in Local Storage
+              </span>
+              <span>•</span>
+              <span className="font-mono">{activeProvider.toUpperCase()} ({activeVoice})</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleRegenerateScript}
+                disabled={isBusy}
+                className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground"
+                title="Regenerate script from source text"
+              >
+                <RefreshCw className="h-2.5 w-2.5" />
+                <span>New Script</span>
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => handleStartSynthesis(false)}
+                disabled={isBusy}
+                className="h-6 px-2 text-[10px] gap-1 font-semibold"
+                title={`Generate or play voice audio from this saved script with ${activeProvider.toUpperCase()}`}
+              >
+                <Play className="h-2.5 w-2.5" />
+                <span>Play Voice</span>
+              </Button>
+            </div>
           </div>
         </div>
       )}

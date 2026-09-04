@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import { resolveOverrides, applyCustomParamsToPayload } from '@/lib/api-param-utils';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -162,7 +163,7 @@ export async function POST(req: NextRequest) {
           body: {
             model: model || provider,
             voice: voice,
-            input: promptText,
+            input: textToSpeak,
             speed: speed,
           },
         };
@@ -324,7 +325,7 @@ export async function POST(req: NextRequest) {
       }
 
       const key = directApiKey || config.customApiKey || config.apiKey || '';
-      const modelName = directModel || config.customModel || 'gpt-4o';
+      let modelName = directModel || config.customModel || 'gpt-4o';
       const customHeadersStr = directHeaders || config.customHeaders || '';
       const customParamsStr = directParams || config.customParams || '';
 
@@ -360,8 +361,11 @@ export async function POST(req: NextRequest) {
         max_tokens: 150,
       };
 
-      // Merge user custom parameters
-      applyCustomParams(reqPayload, customParamsStr);
+      // Merge user custom parameters with alias and canonical resolution
+      applyCustomParamsToPayload(reqPayload, customParamsStr, 'llm');
+      if (reqPayload.model) {
+        modelName = reqPayload.model;
+      }
 
       // If user passed explicit directBody, merge or replace
       if (directBody && typeof directBody === 'object') {
@@ -449,7 +453,7 @@ export async function POST(req: NextRequest) {
 
     // 3B. Google Gemini Engine
     const apiKey = directApiKey || config.geminiApiKey || config.apiKey || process.env.GEMINI_API_KEY || '';
-    const requestedModel = directModel || config.geminiModel || 'gemini-3.7-flash';
+    let requestedModel = directModel || config.geminiModel || 'gemini-3.7-flash';
     const customHeadersStr = directHeaders || config.customHeaders || '';
     const customParamsStr = directParams || config.customParams || '';
 
@@ -472,8 +476,14 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    const { overrides: geminiOverrides } = resolveOverrides(customParamsStr);
+    if (geminiOverrides.model) {
+      requestedModel = geminiOverrides.model;
+    }
+
     const genConfig: any = {};
-    applyCustomParams(genConfig, customParamsStr);
+    applyCustomParamsToPayload(genConfig, customParamsStr, 'llm');
+    delete genConfig.model;
 
     const requestDetails = {
       url: `https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:generateContent`,

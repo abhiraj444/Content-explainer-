@@ -332,6 +332,7 @@ export default function SettingsPage() {
     removeSavedModel,
     clearSavedModels,
     getSavedModelsForProvider,
+    isSettingsLoaded,
   } = useSettings();
 
   // Local form state
@@ -423,9 +424,9 @@ export default function SettingsPage() {
 
   const isInitializedRef = useRef(false);
 
-  // Synchronize state on initial load only
+  // Synchronize state once SettingsContext loads from localStorage
   useEffect(() => {
-    if (!isInitializedRef.current) {
+    if (isSettingsLoaded && !isInitializedRef.current) {
       isInitializedRef.current = true;
       setLocalProvider(aiProvider);
       setLocalGeminiKey(geminiApiKey);
@@ -454,8 +455,15 @@ export default function SettingsPage() {
       setLocalTtsCustomHeaders(ttsCustomHeaders || '');
       setLocalTtsCustomParams(ttsCustomParams || '');
       setLocalTtsSarvamLanguage(ttsSarvamLanguage || 'en-IN');
+      setLocalCompressImages(compressImagesForAi);
+      setLocalTargetKb(targetImageKb || 50);
+      setLocalMergeImages(mergeImagesIntoSingle);
+      setLocalMergeTargetKb(mergeTargetKb || 150);
+      setLocalStreamingOutput(enableStreamingOutput);
+      setLocalLiveThinking(enableLiveThinking);
     }
   }, [
+    isSettingsLoaded,
     aiProvider,
     geminiApiKey,
     geminiModel,
@@ -483,6 +491,12 @@ export default function SettingsPage() {
     ttsCustomHeaders,
     ttsCustomParams,
     ttsSarvamLanguage,
+    compressImagesForAi,
+    targetImageKb,
+    mergeImagesIntoSingle,
+    mergeTargetKb,
+    enableStreamingOutput,
+    enableLiveThinking,
   ]);
 
   // Determine current active custom provider ID
@@ -1507,9 +1521,11 @@ export default function SettingsPage() {
                     if (provider === 'gemini') {
                       setLocalGeminiModel(model);
                       setGeminiModel(model);
+                      addSavedModel('gemini', model);
                     } else {
                       setLocalCustomModel(model);
                       setCustomModel(model);
+                      addSavedModel(activeCustomProviderId || 'custom', model);
                     }
                   }
                   setLocalCustomHeaders(newHeaders);
@@ -1935,6 +1951,7 @@ export default function SettingsPage() {
                   if (model) {
                     setLocalSttModel(model);
                     setSttModel(model);
+                    addSavedModel(localSttProvider, model);
                   }
                   setLocalSttCustomHeaders(newHeaders);
                   setSttCustomHeaders(newHeaders);
@@ -2639,6 +2656,7 @@ export default function SettingsPage() {
                   if (model) {
                     setLocalTtsModel(model);
                     setTtsModel(model);
+                    addSavedModel(localTtsProvider, model);
                   }
                   if (voice) {
                     setLocalTtsVoice(voice);

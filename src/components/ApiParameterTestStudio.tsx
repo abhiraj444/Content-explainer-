@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { resolveOverrides } from '@/lib/api-param-utils';
 
 export interface ApiTestStudioProps {
   mode: 'llm' | 'tts' | 'stt';
@@ -172,13 +173,14 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
     }
 
     try {
-      const resolvedModel = (parsedParamsObj?.model || parsedParamsObj?.model_id || testModel || '').trim();
-      const resolvedEndpoint = (parsedParamsObj?.endpoint || parsedParamsObj?.url || testEndpoint || '').trim();
-      const resolvedVoice = parsedParamsObj?.voice || parsedParamsObj?.speaker || voice;
-      const resolvedSpeed = parsedParamsObj?.speed !== undefined ? parsedParamsObj?.speed : (parsedParamsObj?.pace !== undefined ? parsedParamsObj?.pace : speed);
-      const resolvedFormat = parsedParamsObj?.response_format || parsedParamsObj?.output_audio_codec || customFormat;
-      const resolvedSarvamLang = parsedParamsObj?.target_language_code || parsedParamsObj?.sarvamLanguage || sarvamLanguage;
-      const resolvedPrompt = parsedParamsObj?.input || parsedParamsObj?.text || (Array.isArray(parsedParamsObj?.inputs) ? parsedParamsObj.inputs[0] : null) || testPrompt.trim();
+      const { overrides } = resolveOverrides(testParams);
+      const resolvedModel = (overrides.model || testModel || '').trim();
+      const resolvedEndpoint = (overrides.endpoint || testEndpoint || '').trim();
+      const resolvedVoice = overrides.voice || voice;
+      const resolvedSpeed = overrides.speed !== undefined ? overrides.speed : speed;
+      const resolvedFormat = overrides.responseFormat || customFormat;
+      const resolvedSarvamLang = overrides.sarvamLanguage || sarvamLanguage;
+      const resolvedPrompt = overrides.prompt || testPrompt.trim();
 
       const payload: any = {
         mode,
@@ -235,19 +237,13 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
 
   // Save the tested parameters to application settings
   const handleSaveToSettings = () => {
-    let parsedObj: any = {};
-    if (testParams.trim()) {
-      try {
-        parsedObj = JSON.parse(testParams.trim());
-      } catch {}
-    }
-
-    const resolvedModel = (parsedObj.model || parsedObj.model_id || testModel || '').trim();
-    const resolvedEndpoint = (parsedObj.endpoint || parsedObj.url || testEndpoint || '').trim();
-    const resolvedVoice = parsedObj.voice || parsedObj.speaker || voice;
-    const resolvedSpeed = parsedObj.speed !== undefined ? parsedObj.speed : (parsedObj.pace !== undefined ? parsedObj.pace : speed);
-    const resolvedFormat = parsedObj.response_format || parsedObj.output_audio_codec || customFormat;
-    const resolvedSarvamLang = parsedObj.target_language_code || parsedObj.sarvamLanguage || sarvamLanguage;
+    const { overrides } = resolveOverrides(testParams);
+    const resolvedModel = (overrides.model || testModel || '').trim();
+    const resolvedEndpoint = (overrides.endpoint || testEndpoint || '').trim();
+    const resolvedVoice = overrides.voice || voice;
+    const resolvedSpeed = overrides.speed !== undefined ? overrides.speed : speed;
+    const resolvedFormat = overrides.responseFormat || customFormat;
+    const resolvedSarvamLang = overrides.sarvamLanguage || sarvamLanguage;
 
     onSaveParameters({
       endpoint: resolvedEndpoint,

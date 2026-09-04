@@ -570,6 +570,7 @@ export async function POST(req: NextRequest) {
     const apiKey =
       config.geminiApiKey ||
       config.apiKey ||
+      process.env.GEMINI_API_KEY ||
       '';
 
     if (!apiKey) {

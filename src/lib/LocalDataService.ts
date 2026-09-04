@@ -37,12 +37,12 @@ export interface LocalUser {
 
 export interface LocalAudioCacheItem {
   id: string; // cacheKey (based on context/text/voice)
-  audioBase64: string;
+  audioBase64?: string;
   audioDataUrl?: string;
-  mimeType: string;
+  mimeType?: string;
   script: string;
-  voice: string;
-  provider: string;
+  voice?: string;
+  provider?: string;
   audioPreference?: string;
   createdAt: number;
 }
@@ -81,6 +81,39 @@ export const LocalDataService = {
     } catch (err) {
       console.warn('Failed to save audio to Dexie cache:', err);
       return null;
+    }
+  },
+
+  // Spoken Script Persistence (Preserves generated scripts even if audio generation fails)
+  async saveScriptCache(id: string, script: string, metadata?: { voice?: string; provider?: string; audioPreference?: string }) {
+    try {
+      const existing = await db.audioCache.get(id);
+      const data: LocalAudioCacheItem = {
+        ...existing,
+        id,
+        script,
+        audioBase64: existing?.audioBase64 || '',
+        mimeType: existing?.mimeType || 'text/plain',
+        voice: metadata?.voice || existing?.voice || '',
+        provider: metadata?.provider || existing?.provider || '',
+        audioPreference: metadata?.audioPreference || existing?.audioPreference || '',
+        createdAt: existing?.createdAt || Date.now(),
+      };
+      await db.audioCache.put(data);
+      return data;
+    } catch (err) {
+      console.warn('Failed to save script to Dexie cache:', err);
+      return null;
+    }
+  },
+
+  async getScriptCache(id: string): Promise<string | undefined> {
+    try {
+      const item = await db.audioCache.get(id);
+      return item?.script;
+    } catch (err) {
+      console.warn('Failed to get script from Dexie cache:', err);
+      return undefined;
     }
   },
 
