@@ -22,6 +22,7 @@ import {
   Layers,
   Send,
   HelpCircle,
+  Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -158,6 +159,14 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
     setTestResult(null);
     setHasSaved(false);
 
+    // Stop and reset any ongoing audio playback from prior test
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
+    }
+    setIsPlayingAudio(false);
+
     // Validate JSON before sending
     let parsedParamsObj: any = null;
     if (testParams.trim()) {
@@ -266,10 +275,18 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
 
   // Toggle Audio Playback
   const handleToggleAudio = () => {
-    if (!audioRef.current && testResult?.audioDataUrl) {
-      audioRef.current = new Audio(testResult.audioDataUrl);
-      audioRef.current.onended = () => setIsPlayingAudio(false);
-      audioRef.current.onpause = () => setIsPlayingAudio(false);
+    if (!testResult?.audioDataUrl) return;
+
+    if (!audioRef.current || audioRef.current.src !== testResult.audioDataUrl) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+      const newAudio = new Audio(testResult.audioDataUrl);
+      newAudio.onended = () => setIsPlayingAudio(false);
+      newAudio.onpause = () => setIsPlayingAudio(false);
+      newAudio.onplay = () => setIsPlayingAudio(true);
+      audioRef.current = newAudio;
     }
 
     if (audioRef.current) {
@@ -277,17 +294,24 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
         audioRef.current.pause();
         setIsPlayingAudio(false);
       } else {
-        audioRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => setIsPlayingAudio(false));
+        audioRef.current
+          .play()
+          .then(() => setIsPlayingAudio(true))
+          .catch((err) => {
+            console.error('Playback error:', err);
+            setIsPlayingAudio(false);
+          });
       }
     }
   };
 
-  // Generate dynamic live cURL command
+  // Generate dynamic live cURL command matching actual HTTP payload
   const generateCurlCommand = () => {
     const { overrides } = resolveOverrides(testParams);
     const resolvedEndpoint = (overrides.endpoint || testEndpoint || getStandardEndpoint(providerId, mode)).trim();
     const resolvedModel = (overrides.model || testModel || 'default-model').trim();
-    const authHeader = apiKey ? (providerId === 'sarvam' ? `  -H "api-subscription-key: ${apiKey}" \\\n` : `  -H "Authorization: Bearer ${apiKey}" \\\n`) : '';
+    const isSarvam = providerId === 'sarvam' || resolvedEndpoint.includes('sarvam.ai') || customFormat === 'sarvam';
+    const authHeader = apiKey ? (isSarvam ? `  -H "api-subscription-key: ${apiKey}" \\\n` : `  -H "Authorization: Bearer ${apiKey}" \\\n`) : '';
 
     const customHdrLines = testHeaders
       .split('\n')
@@ -296,46 +320,87 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
       .map((l) => `  -H "${l}" \\\n`)
       .join('');
 
-    let jsonBody = '';
+    let customParsed: Record<string, any> = {};
     if (testParams.trim()) {
       try {
-        const parsed = JSON.parse(testParams);
-        jsonBody = JSON.stringify(parsed, null, 2);
-      } catch {
-        jsonBody = testParams;
-      }
-    } else {
-      if (mode === 'tts') {
-        if (providerId === 'sarvam') {
-          jsonBody = JSON.stringify({
-            inputs: [testPrompt],
-            target_language_code: sarvamLanguage || 'en-IN',
-            speaker: voice || 'meera',
-            model: resolvedModel || 'bulbul:v3',
-            enable_preprocessing: true,
-          }, null, 2);
-        } else {
-          jsonBody = JSON.stringify({
-            model: resolvedModel,
-            input: testPrompt,
-            voice: voice || 'autumn',
-            speed: speed || 1.0,
-          }, null, 2);
-        }
-      } else if (mode === 'stt') {
-        jsonBody = JSON.stringify({
-          model: resolvedModel,
-          response_format: 'json',
-        }, null, 2);
-      } else {
-        jsonBody = JSON.stringify({
-          model: resolvedModel,
-          messages: [{ role: 'user', content: testPrompt }],
-          temperature: 0.2,
-        }, null, 2);
-      }
+        customParsed = JSON.parse(testParams);
+      } catch {}
     }
 
+    let fullPayload: Record<string, any> = {};
+
+    if (mode === 'tts') {
+      if (isSarvam) {
+        const targetPrompt = customParsed.inputs && Array.isArray(customParsed.inputs) && customParsed.inputs.length > 0
+          ? customParsed.inputs[0]
+          : customParsed.input || customParsed.text || customParsed.prompt || testPrompt;
+
+        fullPayload = {
+          inputs: [targetPrompt],
+          target_language_code: customParsed.target_language_code || customParsed.language || customParsed.sarvamLanguage || sarvamLanguage || 'en-IN',
+          speaker: customParsed.speaker || customParsed.voice || voice || 'meera',
+          pace: customParsed.pace !== undefined ? customParsed.pace : (customParsed.speed !== undefined ? customParsed.speed : (speed || 1.0)),
+          model: customParsed.model || resolvedModel || 'bulbul:v3',
+          output_audio_codec: customParsed.output_audio_codec || 'wav',
+          enable_preprocessing: customParsed.enable_preprocessing !== undefined ? customParsed.enable_preprocessing : true,
+          ...customParsed,
+        };
+        // Normalize & clean up
+        fullPayload.inputs = Array.isArray(fullPayload.inputs) ? fullPayload.inputs : [targetPrompt];
+        delete fullPayload.voice;
+        delete fullPayload.speed;
+        delete fullPayload.input;
+        delete fullPayload.text;
+        delete fullPayload.prompt;
+        delete fullPayload.language;
+        delete fullPayload.sarvamLanguage;
+      } else if (providerId === 'gemini') {
+        const textToUse = customParsed.text || customParsed.prompt || customParsed.input || testPrompt;
+        fullPayload = {
+          contents: [{ parts: [{ text: textToUse }] }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: customParsed.voice || customParsed.speaker || voice || 'Kore' },
+              },
+            },
+            ...customParsed.config,
+          },
+          ...customParsed,
+        };
+      } else {
+        const inputToUse = customParsed.input || (Array.isArray(customParsed.inputs) ? customParsed.inputs[0] : customParsed.inputs) || customParsed.text || customParsed.prompt || testPrompt;
+        fullPayload = {
+          model: customParsed.model || resolvedModel || (providerId === 'groq' ? 'canopylabs/orpheus-v1-english' : 'tts-1'),
+          input: inputToUse,
+          voice: customParsed.voice || customParsed.speaker || voice || (providerId === 'groq' ? 'autumn' : 'alloy'),
+          speed: customParsed.speed !== undefined ? customParsed.speed : (customParsed.pace !== undefined ? customParsed.pace : (speed || 1.0)),
+          response_format: customParsed.response_format || (providerId === 'groq' ? 'wav' : 'mp3'),
+          ...customParsed,
+        };
+        delete fullPayload.speaker;
+        delete fullPayload.inputs;
+        delete fullPayload.text;
+        delete fullPayload.prompt;
+        delete fullPayload.pace;
+      }
+    } else if (mode === 'stt') {
+      fullPayload = {
+        model: customParsed.model || resolvedModel || 'whisper-large-v3-turbo',
+        response_format: customParsed.response_format || 'json',
+        ...customParsed,
+      };
+    } else {
+      fullPayload = {
+        model: customParsed.model || resolvedModel || 'gpt-4o',
+        messages: customParsed.messages || [{ role: 'user', content: testPrompt }],
+        temperature: customParsed.temperature !== undefined ? customParsed.temperature : 0.2,
+        ...customParsed,
+      };
+    }
+
+    const jsonBody = JSON.stringify(fullPayload, null, 2);
     return `curl -X POST "${resolvedEndpoint}" \\\n  -H "Content-Type: application/json" \\\n${authHeader}${customHdrLines}  -d '${jsonBody}'`;
   };
 
@@ -875,28 +940,42 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
 
               {/* TTS Audio Player Control */}
               {testResult.audioDataUrl && (
-                <div className="p-3 rounded-lg bg-background/90 border border-emerald-500/30 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={handleToggleAudio}
-                      className="h-8 px-3 rounded-lg gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                <div className="p-3.5 rounded-xl bg-background/95 border border-emerald-500/30 space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleToggleAudio}
+                        className="h-8 px-3 rounded-lg gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs"
+                      >
+                        <Volume2 className="h-3.5 w-3.5" />
+                        <span>{isPlayingAudio ? 'Pause Voice' : 'Play Synthesized Audio'}</span>
+                      </Button>
+                      <span className="text-[11px] text-muted-foreground font-mono">
+                        {testResult.mimeType || 'audio/wav'}
+                      </span>
+                    </div>
+                    <a
+                      href={testResult.audioDataUrl}
+                      download="tts_test_audio.wav"
+                      className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1"
                     >
-                      <Volume2 className="h-3.5 w-3.5" />
-                      <span>{isPlayingAudio ? 'Pause Voice' : 'Play Voice Audio'}</span>
-                    </Button>
-                    <span className="text-[11px] text-muted-foreground font-mono">
-                      {testResult.mimeType || 'audio/wav'}
-                    </span>
+                      <Download className="h-3 w-3" />
+                      <span>Download Audio</span>
+                    </a>
                   </div>
-                  <a
-                    href={testResult.audioDataUrl}
-                    download="tts_test_audio.wav"
-                    className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline"
-                  >
-                    Download Audio
-                  </a>
+
+                  {/* Direct Native HTML5 Audio Player */}
+                  <audio
+                    key={testResult.audioDataUrl.slice(0, 40)}
+                    controls
+                    src={testResult.audioDataUrl}
+                    className="w-full h-8 rounded-lg accent-emerald-600 bg-muted/30"
+                    onPlay={() => setIsPlayingAudio(true)}
+                    onPause={() => setIsPlayingAudio(false)}
+                    onEnded={() => setIsPlayingAudio(false)}
+                  />
                 </div>
               )}
 

@@ -89,25 +89,28 @@ export async function POST(req: NextRequest) {
       customHeaders: directHeaders,
       customParams: directParams,
       customBody: directBody,
-      prompt = 'Respond with the single word "READY" to verify AI readiness.',
-      text: directText = 'Testing neural voice synthesis connectivity and audio quality.',
-      voice: directVoice = 'Puck',
-      speed: directSpeed = 1.0,
-      sarvamLanguage: directSarvamLanguage = 'en-IN',
+      prompt: rawPrompt,
+      text: rawText,
+      voice: directVoice,
+      speed: directSpeed,
+      sarvamLanguage: directSarvamLanguage,
     } = body;
+
+    // Resolve overrides from customParams
+    const { overrides } = resolveOverrides(directParams);
 
     // =========================================================================
     // 1. TTS Testing Mode
     // =========================================================================
     if (mode === 'tts' || config.ttsSettings) {
       const ttsSettings = config.ttsSettings || {};
-      const provider = ttsSettings.provider || body.provider || 'gemini';
+      const provider = overrides.voice && body.provider ? body.provider : (ttsSettings.provider || body.provider || 'gemini');
       const key = directApiKey || ttsSettings.apiKey || config.apiKey || (provider === 'gemini' ? (process.env.GEMINI_API_KEY || '') : (provider === 'groq' ? (process.env.GROQ_API_KEY || '') : ''));
-      const endpoint = directEndpoint || ttsSettings.endpoint || '';
-      const model = directModel || ttsSettings.model || '';
-      const voice = directVoice || ttsSettings.voice || 'Puck';
-      const speed = directSpeed || ttsSettings.speed || 1.0;
-      const textToSpeak = directText || prompt;
+      const endpoint = overrides.endpoint || directEndpoint || ttsSettings.endpoint || '';
+      const model = overrides.model || directModel || ttsSettings.model || '';
+      const voice = overrides.voice || directVoice || ttsSettings.voice || 'Puck';
+      const speed = overrides.speed !== undefined ? overrides.speed : (directSpeed !== undefined ? directSpeed : (ttsSettings.speed || 1.0));
+      const textToSpeak = (overrides.prompt || rawText || rawPrompt || 'Testing neural voice synthesis connectivity and audio quality.').trim();
       const customHeadersStr = directHeaders || ttsSettings.customHeaders || '';
       const customParamsStr = directParams || ttsSettings.customParams || '';
 

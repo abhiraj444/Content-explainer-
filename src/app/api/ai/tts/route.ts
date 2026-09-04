@@ -251,7 +251,11 @@ export async function performTtsSynthesis(body: any): Promise<{
   const speed = parsedCustom.speed !== undefined ? parsedCustom.speed : (parsedCustom.pace !== undefined ? parsedCustom.pace : rawSpeed);
   const sarvamLanguage = parsedCustom.target_language_code || parsedCustom.sarvamLanguage || rawSarvamLang;
 
-  const resolvedText = parsedCustom.input || parsedCustom.text || text;
+  const rawCustomInput = Array.isArray(parsedCustom.inputs) && parsedCustom.inputs.length > 0
+    ? parsedCustom.inputs[0]
+    : parsedCustom.input || parsedCustom.text || parsedCustom.prompt || parsedCustom.inputs;
+
+  const resolvedText = rawCustomInput || text;
   if (!resolvedText || typeof resolvedText !== 'string' || !resolvedText.trim()) {
     throw new Error('Text content is required for speech synthesis.');
   }
@@ -400,7 +404,7 @@ export async function performTtsSynthesis(body: any): Promise<{
     }
 
     const GROQ_ORPHEUS_VOICES = ['autumn', 'diana', 'hannah', 'austin', 'daniel', 'troy'];
-    const requestedVoice = (voice || '').toLowerCase().trim();
+    const requestedVoice = (parsedCustom.voice || parsedCustom.speaker || voice || '').toLowerCase().trim();
     const resolvedVoice = GROQ_ORPHEUS_VOICES.includes(requestedVoice)
       ? requestedVoice
       : requestedVoice.length > 0 && !['af_heart', 'am_adam', 'default', 'alloy'].includes(requestedVoice)
@@ -414,13 +418,23 @@ export async function performTtsSynthesis(body: any): Promise<{
       ...userHeaders,
     };
     const groqBody: Record<string, any> = {
-      model: model || 'canopylabs/orpheus-v1-english',
+      model: parsedCustom.model || model || 'canopylabs/orpheus-v1-english',
       input: cleanText,
       voice: resolvedVoice,
-      speed: Math.max(0.5, Math.min(2.0, Number(speed) || 1.0)),
-      response_format: 'wav',
+      speed: Math.max(0.5, Math.min(2.0, Number(parsedCustom.speed !== undefined ? parsedCustom.speed : (parsedCustom.pace !== undefined ? parsedCustom.pace : speed)) || 1.0)),
+      response_format: parsedCustom.response_format || 'wav',
     };
     applyCustomParams(groqBody, customParams);
+
+    // Normalize canonical fields and clean aliases
+    groqBody.input = groqBody.input || (Array.isArray(groqBody.inputs) ? groqBody.inputs[0] : groqBody.inputs) || groqBody.text || groqBody.prompt || cleanText;
+    groqBody.voice = groqBody.voice || groqBody.speaker || resolvedVoice;
+    groqBody.speed = Math.max(0.5, Math.min(2.0, Number(groqBody.speed || groqBody.pace) || 1.0));
+    delete groqBody.speaker;
+    delete groqBody.inputs;
+    delete groqBody.text;
+    delete groqBody.prompt;
+    delete groqBody.pace;
 
     const requestDetails = {
       url: groqUrl,
@@ -449,7 +463,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       mimeType: processed.mimeType,
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
-      voice: resolvedVoice,
+      voice: groqBody.voice || resolvedVoice,
       requestDetails,
     };
   }
@@ -462,8 +476,10 @@ export async function performTtsSynthesis(body: any): Promise<{
     }
 
     const sarvamUrl = endpoint || 'https://api.sarvam.ai/text-to-speech';
-    const targetLang = sarvamLanguage || (resolvedAudioPref === 'hinglish_indian' ? 'hi-IN' : 'en-IN');
-    const selectedSpeaker = voice && voice !== 'default' ? voice : 'shubh';
+    const targetLang = parsedCustom.target_language_code || parsedCustom.language || parsedCustom.sarvamLanguage || sarvamLanguage || (resolvedAudioPref === 'hinglish_indian' ? 'hi-IN' : 'en-IN');
+    const selectedSpeaker = parsedCustom.speaker || parsedCustom.voice || (voice && voice !== 'default' ? voice : 'shubh');
+    const selectedModel = parsedCustom.model || model || 'bulbul:v3';
+    const selectedPace = parsedCustom.pace !== undefined ? parsedCustom.pace : (parsedCustom.speed !== undefined ? parsedCustom.speed : (speed || 1.0));
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -472,25 +488,43 @@ export async function performTtsSynthesis(body: any): Promise<{
       ...userHeaders,
     };
 
-    const isBulbulV2 = Boolean(model && (model.toLowerCase().includes('v2') || model.toLowerCase().includes('v1')));
+    const isBulbulV2 = Boolean(selectedModel && (selectedModel.toLowerCase().includes('v2') || selectedModel.toLowerCase().includes('v1')));
     const sarvamBody: Record<string, any> = {
-      inputs: [cleanText],
+      inputs: Array.isArray(parsedCustom.inputs) && parsedCustom.inputs.length > 0 ? parsedCustom.inputs : [cleanText],
       target_language_code: targetLang,
       speaker: selectedSpeaker,
-      pace: Math.max(0.5, Math.min(2.0, Number(speed) || 1.0)),
-      model: model || 'bulbul:v3',
-      output_audio_codec: 'wav',
-      enable_preprocessing: true,
+      pace: Math.max(0.5, Math.min(2.0, Number(selectedPace) || 1.0)),
+      model: selectedModel,
+      output_audio_codec: parsedCustom.output_audio_codec || 'wav',
+      enable_preprocessing: parsedCustom.enable_preprocessing !== undefined ? parsedCustom.enable_preprocessing : true,
     };
 
-    if (isBulbulV2) {
-      sarvamBody.pitch = 0;
-      sarvamBody.loudness = 1.0;
+    if (isBulbulV2 || parsedCustom.pitch !== undefined) {
+      sarvamBody.pitch = parsedCustom.pitch !== undefined ? parsedCustom.pitch : 0;
+    }
+    if (isBulbulV2 || parsedCustom.loudness !== undefined) {
+      sarvamBody.loudness = parsedCustom.loudness !== undefined ? parsedCustom.loudness : 1.0;
     }
 
     applyCustomParams(sarvamBody, customParams);
 
-    if (!isBulbulV2) {
+    // Strictly canonicalize Sarvam payload fields and strip incompatible alias keys
+    sarvamBody.inputs = Array.isArray(sarvamBody.inputs) && sarvamBody.inputs.length > 0
+      ? sarvamBody.inputs
+      : [sarvamBody.input || sarvamBody.text || sarvamBody.prompt || cleanText];
+    sarvamBody.speaker = sarvamBody.speaker || sarvamBody.voice || selectedSpeaker;
+    sarvamBody.target_language_code = sarvamBody.target_language_code || targetLang;
+    sarvamBody.pace = Math.max(0.5, Math.min(2.0, Number(sarvamBody.pace || sarvamBody.speed || selectedPace) || 1.0));
+    sarvamBody.model = sarvamBody.model || selectedModel;
+
+    delete sarvamBody.voice;
+    delete sarvamBody.speed;
+    delete sarvamBody.input;
+    delete sarvamBody.text;
+    delete sarvamBody.prompt;
+    delete sarvamBody.language;
+    delete sarvamBody.sarvamLanguage;
+    if (!isBulbulV2 && parsedCustom.pitch === undefined) {
       delete sarvamBody.pitch;
       delete sarvamBody.loudness;
     }
@@ -522,7 +556,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       mimeType: processed.mimeType,
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
-      voice: selectedSpeaker,
+      voice: sarvamBody.speaker || selectedSpeaker,
       requestDetails,
     };
   }
@@ -543,13 +577,21 @@ export async function performTtsSynthesis(body: any): Promise<{
       ...userHeaders,
     };
     const openRouterBody: Record<string, any> = {
-      model: model || 'openai/tts-1',
+      model: parsedCustom.model || model || 'openai/tts-1',
       input: cleanText,
-      voice: voice || 'alloy',
-      speed: Math.max(0.25, Math.min(4.0, Number(speed) || 1.0)),
-      response_format: 'mp3',
+      voice: parsedCustom.voice || parsedCustom.speaker || voice || 'alloy',
+      speed: Math.max(0.25, Math.min(4.0, Number(parsedCustom.speed !== undefined ? parsedCustom.speed : (parsedCustom.pace !== undefined ? parsedCustom.pace : speed)) || 1.0)),
+      response_format: parsedCustom.response_format || 'mp3',
     };
     applyCustomParams(openRouterBody, customParams);
+
+    openRouterBody.input = openRouterBody.input || (Array.isArray(openRouterBody.inputs) ? openRouterBody.inputs[0] : openRouterBody.inputs) || openRouterBody.text || openRouterBody.prompt || cleanText;
+    openRouterBody.voice = openRouterBody.voice || openRouterBody.speaker || voice || 'alloy';
+    delete openRouterBody.speaker;
+    delete openRouterBody.inputs;
+    delete openRouterBody.text;
+    delete openRouterBody.prompt;
+    delete openRouterBody.pace;
 
     const requestDetails = {
       url: openRouterUrl,
@@ -597,13 +639,21 @@ export async function performTtsSynthesis(body: any): Promise<{
       ...userHeaders,
     };
     const openAiBody: Record<string, any> = {
-      model: model || 'tts-1',
+      model: parsedCustom.model || model || 'tts-1',
       input: cleanText,
-      voice: voice || 'alloy',
-      speed: Math.max(0.25, Math.min(4.0, Number(speed) || 1.0)),
-      response_format: 'mp3',
+      voice: parsedCustom.voice || parsedCustom.speaker || voice || 'alloy',
+      speed: Math.max(0.25, Math.min(4.0, Number(parsedCustom.speed !== undefined ? parsedCustom.speed : (parsedCustom.pace !== undefined ? parsedCustom.pace : speed)) || 1.0)),
+      response_format: parsedCustom.response_format || 'mp3',
     };
     applyCustomParams(openAiBody, customParams);
+
+    openAiBody.input = openAiBody.input || (Array.isArray(openAiBody.inputs) ? openAiBody.inputs[0] : openAiBody.inputs) || openAiBody.text || openAiBody.prompt || cleanText;
+    openAiBody.voice = openAiBody.voice || openAiBody.speaker || voice || 'alloy';
+    delete openAiBody.speaker;
+    delete openAiBody.inputs;
+    delete openAiBody.text;
+    delete openAiBody.prompt;
+    delete openAiBody.pace;
 
     const requestDetails = {
       url: openAiUrl,
@@ -644,7 +694,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       throw new Error('ElevenLabs API Key is required.');
     }
 
-    const voiceId = voice || '21m00Tcm4TlvDq8ikWAM'; // Rachel default
+    const voiceId = parsedCustom.voice_id || parsedCustom.voice || parsedCustom.speaker || voice || '21m00Tcm4TlvDq8ikWAM';
     const elevenUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
     const elevenHeaders: Record<string, string> = {
       'xi-api-key': activeKey,
@@ -653,13 +703,19 @@ export async function performTtsSynthesis(body: any): Promise<{
     };
     const elevenBody: Record<string, any> = {
       text: cleanText,
-      model_id: model || 'eleven_multilingual_v2',
+      model_id: parsedCustom.model_id || parsedCustom.model || model || 'eleven_multilingual_v2',
       voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
+        stability: parsedCustom.stability !== undefined ? parsedCustom.stability : 0.5,
+        similarity_boost: parsedCustom.similarity_boost !== undefined ? parsedCustom.similarity_boost : 0.75,
       },
     };
     applyCustomParams(elevenBody, customParams);
+
+    elevenBody.text = elevenBody.text || elevenBody.input || (Array.isArray(elevenBody.inputs) ? elevenBody.inputs[0] : elevenBody.inputs) || cleanText;
+    delete elevenBody.inputs;
+    delete elevenBody.input;
+    delete elevenBody.speaker;
+    delete elevenBody.voice;
 
     const requestDetails = {
       url: elevenUrl,
@@ -698,6 +754,16 @@ export async function performTtsSynthesis(body: any): Promise<{
     const activeKey = clientApiKey || '';
     const ttsUrl = endpoint || 'http://localhost:8000/v1/audio/speech';
 
+    // If custom endpoint points to Sarvam, route through Sarvam handler above
+    if (ttsUrl.includes('sarvam.ai') || customFormat === 'sarvam') {
+      // Re-invoke with sarvam provider
+      return performTtsSynthesis({
+        ...body,
+        provider: 'sarvam',
+        endpoint: ttsUrl,
+      });
+    }
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...userHeaders,
@@ -710,17 +776,17 @@ export async function performTtsSynthesis(body: any): Promise<{
     if (customFormat === 'json_base64') {
       requestBody = {
         text: cleanText,
-        voice: voice || 'default',
-        model: model || 'tts-1',
-        speed: Number(speed) || 1.0,
+        voice: parsedCustom.voice || parsedCustom.speaker || voice || 'default',
+        model: parsedCustom.model || model || 'tts-1',
+        speed: Number(parsedCustom.speed !== undefined ? parsedCustom.speed : (parsedCustom.pace !== undefined ? parsedCustom.pace : speed)) || 1.0,
       };
     } else {
       requestBody = {
-        model: model || 'tts-1',
+        model: parsedCustom.model || model || 'tts-1',
         input: cleanText,
-        voice: voice || 'default',
-        speed: Number(speed) || 1.0,
-        response_format: 'mp3',
+        voice: parsedCustom.voice || parsedCustom.speaker || voice || 'default',
+        speed: Number(parsedCustom.speed !== undefined ? parsedCustom.speed : (parsedCustom.pace !== undefined ? parsedCustom.pace : speed)) || 1.0,
+        response_format: parsedCustom.response_format || 'mp3',
       };
     }
     applyCustomParams(requestBody, customParams);
@@ -752,7 +818,7 @@ export async function performTtsSynthesis(body: any): Promise<{
       mimeType: processed.mimeType,
       audioDataUrl: `data:${processed.mimeType};base64,${processed.base64Audio}`,
       audioBase64: processed.base64Audio,
-      voice,
+      voice: requestBody.voice || voice || 'default',
       requestDetails,
     };
   }

@@ -94,7 +94,7 @@ export function resolveOverrides(customParams?: string | Record<string, any> | n
   const thinkingAliases = ['thinking_budget', 'thinkingBudget', 'reasoning_budget', 'reasoningBudget'];
   const formatAliases = ['response_format', 'responseFormat', 'output_audio_codec', 'format'];
   const langAliases = ['target_language_code', 'sarvamLanguage', 'language_code', 'language'];
-  const promptAliases = ['prompt', 'input', 'text'];
+  const promptAliases = ['prompt', 'input', 'text', 'inputs'];
 
   const allAliasKeys = new Set([
     ...modelAliases,
@@ -194,9 +194,14 @@ export function resolveOverrides(customParams?: string | Record<string, any> | n
   }
 
   for (const k of promptAliases) {
-    if (rawParams[k] !== undefined && typeof rawParams[k] === 'string' && rawParams[k].trim()) {
-      overrides.prompt = rawParams[k].trim();
-      break;
+    if (rawParams[k] !== undefined) {
+      if (typeof rawParams[k] === 'string' && rawParams[k].trim()) {
+        overrides.prompt = rawParams[k].trim();
+        break;
+      } else if (Array.isArray(rawParams[k]) && rawParams[k].length > 0 && typeof rawParams[k][0] === 'string') {
+        overrides.prompt = rawParams[k][0].trim();
+        break;
+      }
     }
   }
 

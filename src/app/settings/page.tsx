@@ -848,6 +848,7 @@ export default function SettingsPage() {
           audioPreference: localTtsAudioPreference,
           customFormat: localTtsCustomFormat,
           customHeaders: localTtsCustomHeaders,
+          customParams: localTtsCustomParams,
           sarvamLanguage: localTtsSarvamLanguage,
         }),
       });
