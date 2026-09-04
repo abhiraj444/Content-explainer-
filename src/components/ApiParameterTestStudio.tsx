@@ -44,6 +44,7 @@ export interface ApiTestStudioProps {
   customFormat?: string;
   sarvamLanguage?: string;
   defaultTestPrompt?: string;
+  initialOpen?: boolean;
   onSaveParameters: (params: {
     endpoint?: string;
     model?: string;
@@ -71,12 +72,13 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
   customFormat = 'auto',
   sarvamLanguage = 'en-IN',
   defaultTestPrompt,
+  initialOpen = true,
   onSaveParameters,
   className = '',
 }) => {
   const { toast } = useToast();
-  const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'params' | 'headers' | 'docs'>('params');
+  const [isOpen, setIsOpen] = useState(initialOpen);
+  const [activeTab, setActiveTab] = useState<'params' | 'headers' | 'curl' | 'docs'>('params');
 
   // Local editable test parameters
   const [testEndpoint, setTestEndpoint] = useState(endpoint);
@@ -280,23 +282,83 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
     }
   };
 
-  // Copy cURL command for debugging in terminal
-  const handleCopyCurl = () => {
-    const authHeader = apiKey ? ` -H "Authorization: Bearer ${apiKey}"` : '';
-    const customHdrs = testHeaders
+  // Generate dynamic live cURL command
+  const generateCurlCommand = () => {
+    const { overrides } = resolveOverrides(testParams);
+    const resolvedEndpoint = (overrides.endpoint || testEndpoint || getStandardEndpoint(providerId, mode)).trim();
+    const resolvedModel = (overrides.model || testModel || 'default-model').trim();
+    const authHeader = apiKey ? (providerId === 'sarvam' ? `  -H "api-subscription-key: ${apiKey}" \\\n` : `  -H "Authorization: Bearer ${apiKey}" \\\n`) : '';
+
+    const customHdrLines = testHeaders
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean)
-      .map((l) => ` -H "${l}"`)
+      .map((l) => `  -H "${l}" \\\n`)
       .join('');
-    const curl = `curl -X POST "${testEndpoint || 'https://api.openai.com/v1/chat/completions'}" \\
-  -H "Content-Type: application/json"${authHeader}${customHdrs} \\
-  -d '${testParams.trim() || '{"model":"' + testModel + '","messages":[{"role":"user","content":"READY"}]}'}'`;
 
+    let jsonBody = '';
+    if (testParams.trim()) {
+      try {
+        const parsed = JSON.parse(testParams);
+        jsonBody = JSON.stringify(parsed, null, 2);
+      } catch {
+        jsonBody = testParams;
+      }
+    } else {
+      if (mode === 'tts') {
+        if (providerId === 'sarvam') {
+          jsonBody = JSON.stringify({
+            inputs: [testPrompt],
+            target_language_code: sarvamLanguage || 'en-IN',
+            speaker: voice || 'meera',
+            model: resolvedModel || 'bulbul:v3',
+            enable_preprocessing: true,
+          }, null, 2);
+        } else {
+          jsonBody = JSON.stringify({
+            model: resolvedModel,
+            input: testPrompt,
+            voice: voice || 'autumn',
+            speed: speed || 1.0,
+          }, null, 2);
+        }
+      } else if (mode === 'stt') {
+        jsonBody = JSON.stringify({
+          model: resolvedModel,
+          response_format: 'json',
+        }, null, 2);
+      } else {
+        jsonBody = JSON.stringify({
+          model: resolvedModel,
+          messages: [{ role: 'user', content: testPrompt }],
+          temperature: 0.2,
+        }, null, 2);
+      }
+    }
+
+    return `curl -X POST "${resolvedEndpoint}" \\\n  -H "Content-Type: application/json" \\\n${authHeader}${customHdrLines}  -d '${jsonBody}'`;
+  };
+
+  // Copy cURL command for debugging in terminal
+  const handleCopyCurl = () => {
+    const curl = generateCurlCommand();
     navigator.clipboard.writeText(curl);
     setHasCopiedCurl(true);
     setTimeout(() => setHasCopiedCurl(false), 2000);
-    toast({ title: 'cURL Command Copied', description: 'Paste in your terminal to test directly via command line.' });
+    toast({ title: 'cURL Command Copied', description: 'Paste in your terminal or debugger to execute directly.' });
+  };
+
+  // Copy JSON body
+  const handleCopyBody = () => {
+    let body = testParams.trim();
+    if (!body) {
+      const defaultObj = getDefaultParamsForProvider(mode, providerId, testModel);
+      body = JSON.stringify(defaultObj, null, 2);
+    }
+    navigator.clipboard.writeText(body);
+    setHasCopiedBody(true);
+    setTimeout(() => setHasCopiedBody(false), 2000);
+    toast({ title: 'JSON Body Copied', description: 'Request payload copied to clipboard.' });
   };
 
   return (
@@ -308,16 +370,26 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
             <Sliders className="h-4 w-4" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold text-foreground">
-                Request Parameters &amp; Connection Inspector
+                Custom Parameters &amp; cURL Request Inspector
               </span>
-              <span className="text-[10px] font-mono px-2 py-0.2 rounded-full bg-primary/10 text-primary font-semibold">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">
                 {providerName}
               </span>
+              {testParams.trim() ? (
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
+                  Custom JSON Active
+                </span>
+              ) : null}
+              {testHeaders.trim() ? (
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-semibold border border-indigo-500/20">
+                  Custom Headers Active
+                </span>
+              ) : null}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Inspect, customize, and test the exact HTTP payload &amp; headers sent to {providerName}.
+              Inspect, modify custom JSON parameters &amp; HTTP headers, or view the exact generated cURL command.
             </p>
           </div>
         </div>
@@ -342,7 +414,7 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
             onClick={() => setIsOpen(!isOpen)}
             className="h-8 text-xs font-medium gap-1 px-2.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50"
           >
-            <span>{isOpen ? 'Hide Parameters' : 'Edit Parameters'}</span>
+            <span>{isOpen ? 'Hide Parameters & cURL' : 'Edit Parameters & cURL'}</span>
             {isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </Button>
         </div>
@@ -437,8 +509,8 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
           </div>
 
           {/* Studio Navigation Tabs */}
-          <div className="flex items-center justify-between border-b border-border/70 pb-2">
-            <div className="flex items-center gap-1.5">
+          <div className="flex items-center justify-between border-b border-border/70 pb-2 flex-wrap gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <button
                 type="button"
                 onClick={() => setActiveTab('params')}
@@ -449,7 +521,7 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
                 }`}
               >
                 <FileJson className="h-3.5 w-3.5" />
-                <span>Request Body / Parameters (JSON)</span>
+                <span>Custom Parameters (JSON)</span>
               </button>
 
               <button
@@ -467,6 +539,19 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
 
               <button
                 type="button"
+                onClick={() => setActiveTab('curl')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  activeTab === 'curl'
+                    ? 'bg-primary text-primary-foreground shadow-2xs'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                }`}
+              >
+                <Send className="h-3.5 w-3.5 text-amber-500" />
+                <span>Live cURL Request</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setActiveTab('docs')}
                 className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
                   activeTab === 'docs'
@@ -474,7 +559,7 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
                 }`}
               >
-                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
                 <span>Docs &amp; Presets</span>
               </button>
             </div>
@@ -595,7 +680,68 @@ export const ApiParameterTestStudio: React.FC<ApiTestStudioProps> = ({
             </div>
           )}
 
-          {/* Tab 3: Documentation & Presets */}
+          {/* Tab 3: Live cURL & Request Inspector */}
+          {activeTab === 'curl' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground flex-wrap gap-2">
+                <span>
+                  Exact cURL command generated in real-time from your current endpoint, headers, and parameters:
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyCurl}
+                    className="h-7 text-[11px] px-2.5 rounded-lg gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+                  >
+                    {hasCopiedCurl ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                    <span>{hasCopiedCurl ? 'Copied cURL!' : 'Copy cURL Command'}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCopyBody}
+                    className="h-7 text-[11px] px-2 text-muted-foreground hover:text-foreground gap-1"
+                  >
+                    {hasCopiedBody ? <Check className="h-3 w-3 text-emerald-600" /> : <FileJson className="h-3 w-3" />}
+                    <span>{hasCopiedBody ? 'Copied Body!' : 'Copy JSON'}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* cURL Code Container */}
+              <div className="relative rounded-xl border border-border/80 bg-neutral-950 text-neutral-100 p-4 font-mono text-xs overflow-x-auto shadow-inner">
+                <pre className="whitespace-pre-wrap leading-relaxed select-all">
+                  {generateCurlCommand()}
+                </pre>
+              </div>
+
+              {/* Breakdown Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-lg bg-background border border-border/70 space-y-1">
+                  <span className="font-semibold text-foreground text-[11px] flex items-center gap-1">
+                    <Send className="h-3 w-3 text-primary" /> Target Method &amp; Endpoint
+                  </span>
+                  <div className="font-mono text-[11px] text-muted-foreground break-all select-all">
+                    POST {testEndpoint || getStandardEndpoint(providerId, mode)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg bg-background border border-border/70 space-y-1">
+                  <span className="font-semibold text-foreground text-[11px] flex items-center gap-1">
+                    <Code2 className="h-3 w-3 text-indigo-500" /> Active Headers
+                  </span>
+                  <div className="font-mono text-[10px] text-muted-foreground truncate">
+                    Content-Type: application/json, {apiKey ? 'Auth configured' : 'No key provided'}
+                    {testHeaders.trim() ? `, +${testHeaders.split('\n').filter(Boolean).length} custom` : ''}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab 4: Documentation & Presets */}
           {activeTab === 'docs' && (
             <div className="space-y-3 p-3.5 rounded-xl bg-background border border-border/70 text-xs">
               <div className="flex items-center justify-between">
