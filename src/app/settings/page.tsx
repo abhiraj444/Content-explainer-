@@ -17,8 +17,10 @@ import {
   DEFAULT_TTS_VOICE,
   DEFAULT_TTS_MODEL,
   KNOWN_AI_PROVIDERS,
+  ALL_VAULT_PROVIDERS,
   detectProviderIdFromEndpoint,
   type ProviderPresetInfo,
+  type VaultProviderInfo,
 } from '@/context/SettingsContext';
 import { KNOWN_TTS_PROVIDERS, TTS_VOICES, SARVAM_SUPPORTED_LANGUAGES } from '@/lib/tts-voices';
 import { ClientSideAiService } from '@/lib/ClientSideAiService';
@@ -547,7 +549,7 @@ export default function SettingsPage() {
   };
 
   // Switch active provider directly from Vault Card
-  const handleActivateProviderFromVault = (preset: ProviderPresetInfo) => {
+  const handleActivateProviderFromVault = (preset: ProviderPresetInfo | VaultProviderInfo) => {
     if (preset.id === 'gemini') {
       if (localCustomKey.trim() && activeCustomProviderId) {
         const cleanKey = localCustomKey.trim();
@@ -566,7 +568,7 @@ export default function SettingsPage() {
       setLocalGeminiKey(savedKey);
       setTestResult(null);
       toast({
-        title: 'Switched to Google Gemini',
+        title: 'Switched LLM to Google Gemini',
         description: savedKey ? 'Loaded your saved Gemini API key.' : 'Please enter your Gemini key.',
       });
       return;
@@ -597,32 +599,110 @@ export default function SettingsPage() {
     setLocalCustomKey(savedKey);
     setTestResult(null);
     toast({
-      title: `Switched to ${preset.name}`,
+      title: `Switched LLM to ${preset.name}`,
       description: savedKey ? `Loaded your saved API key for ${preset.name}.` : `Enter your ${preset.name} key.`,
     });
   };
 
-  // Update a single provider key in the vault
+  // Switch active voice TTS provider directly from Vault Card
+  const handleActivateTtsFromVault = (preset: VaultProviderInfo) => {
+    const ttsPreset = KNOWN_TTS_PROVIDERS.find((p) => p.id === preset.id);
+    if (ttsPreset) {
+      handleApplyTtsPreset(ttsPreset);
+    } else {
+      setLocalTtsProvider(preset.id as TtsProvider);
+      const savedKey = ttsVaultKeys[preset.id] || vaultKeys[preset.id] || getSavedTtsKeyForProvider(preset.id) || '';
+      setLocalTtsApiKey(savedKey);
+      toast({
+        title: `Switched Voice to ${preset.name}`,
+        description: savedKey ? `Loaded saved voice key for ${preset.name}.` : `Voice provider set to ${preset.name}.`,
+      });
+    }
+  };
+
+  // Switch active STT provider directly from Vault Card
+  const handleActivateSttFromVault = (preset: VaultProviderInfo) => {
+    const sttPreset = STT_PROVIDER_PRESETS.find((p) => p.id === preset.id);
+    if (sttPreset) {
+      handleApplySttPreset(sttPreset);
+    } else {
+      setLocalSttProvider(preset.id as SttProvider);
+      const savedKey = sttVaultKeys[preset.id] || vaultKeys[preset.id] || getSavedSttKeyForProvider(preset.id) || '';
+      setLocalSttApiKey(savedKey);
+      toast({
+        title: `Switched STT to ${preset.name}`,
+        description: savedKey ? `Loaded saved STT key for ${preset.name}.` : `STT set to ${preset.name}.`,
+      });
+    }
+  };
+
+  // Update a single provider key in the vault (isolated & unified across stores)
   const handleUpdateVaultKey = (pid: string, newKey: string) => {
     const trimmed = newKey.trim();
     setVaultKeys((prev) => {
       const updated = { ...prev, [pid]: trimmed };
-      localStorage.setItem('app_provider_keys', JSON.stringify(updated));
-      if (trimmed) {
-        localStorage.setItem(`app_provider_key_${pid}`, trimmed);
-      } else {
-        localStorage.removeItem(`app_provider_key_${pid}`);
-      }
+      try {
+        localStorage.setItem('app_provider_keys', JSON.stringify(updated));
+        if (trimmed) {
+          localStorage.setItem(`app_provider_key_${pid}`, trimmed);
+        } else {
+          localStorage.removeItem(`app_provider_key_${pid}`);
+        }
+      } catch {}
       return updated;
     });
     setProviderKey(pid, trimmed);
 
+    // Sync with STT vault if applicable
+    if (pid === 'groq' || pid === 'openai' || pid === 'custom' || pid === localSttProvider) {
+      setSttVaultKeys((prev) => {
+        const updated = { ...prev, [pid]: trimmed };
+        try {
+          localStorage.setItem('app_stt_provider_keys', JSON.stringify(updated));
+          if (trimmed) {
+            localStorage.setItem(`app_stt_provider_key_${pid}`, trimmed);
+          } else {
+            localStorage.removeItem(`app_stt_provider_key_${pid}`);
+          }
+        } catch {}
+        return updated;
+      });
+      setSttProviderKey(pid, trimmed);
+    }
+
+    // Sync with TTS vault if applicable
+    if (pid === 'sarvam' || pid === 'elevenlabs' || pid === 'openai' || pid === 'groq' || pid === 'custom' || pid === localTtsProvider) {
+      setTtsVaultKeys((prev) => {
+        const updated = { ...prev, [pid]: trimmed };
+        try {
+          localStorage.setItem('app_tts_provider_keys', JSON.stringify(updated));
+          if (trimmed) {
+            localStorage.setItem(`app_tts_provider_key_${pid}`, trimmed);
+          } else {
+            localStorage.removeItem(`app_tts_provider_key_${pid}`);
+          }
+        } catch {}
+        return updated;
+      });
+      setTtsProviderKey(pid, trimmed);
+    }
+
     // Also sync with active inputs if currently using this provider
     if (pid === 'gemini') {
       setLocalGeminiKey(trimmed);
+      setGeminiApiKey(trimmed);
     }
     if (pid === activeCustomProviderId) {
       setLocalCustomKey(trimmed);
+      setCustomApiKey(trimmed, pid);
+    }
+    if (pid === localSttProvider) {
+      setLocalSttApiKey(trimmed);
+      setSttApiKey(trimmed, pid);
+    }
+    if (pid === localTtsProvider) {
+      setLocalTtsApiKey(trimmed);
+      setTtsApiKey(trimmed, pid);
     }
   };
 
@@ -638,12 +718,20 @@ export default function SettingsPage() {
   const handleApplySttPreset = (preset: (typeof STT_PROVIDER_PRESETS)[0]) => {
     // 1. Save previous STT key
     if (localSttApiKey.trim() && localSttProvider) {
+      const cleanKey = localSttApiKey.trim();
       setSttVaultKeys((prev) => {
-        const updated = { ...prev, [localSttProvider]: localSttApiKey.trim() };
+        const updated = { ...prev, [localSttProvider]: cleanKey };
         localStorage.setItem('app_stt_provider_keys', JSON.stringify(updated));
-        localStorage.setItem(`app_stt_provider_key_${localSttProvider}`, localSttApiKey.trim());
+        localStorage.setItem(`app_stt_provider_key_${localSttProvider}`, cleanKey);
         return updated;
       });
+      setVaultKeys((prev) => {
+        const updated = { ...prev, [localSttProvider]: cleanKey };
+        localStorage.setItem('app_provider_keys', JSON.stringify(updated));
+        localStorage.setItem(`app_provider_key_${localSttProvider}`, cleanKey);
+        return updated;
+      });
+      setSttProviderKey(localSttProvider, cleanKey);
     }
 
     // 2. Set new preset
@@ -657,7 +745,7 @@ export default function SettingsPage() {
     // 3. Load saved STT key for this provider
     const savedStt = preset.id === 'gemini' 
       ? (localGeminiKey || vaultKeys['gemini'] || '')
-      : (sttVaultKeys[preset.id] || getSavedSttKeyForProvider(preset.id) || '');
+      : (sttVaultKeys[preset.id] || vaultKeys[preset.id] || getSavedSttKeyForProvider(preset.id) || '');
     
     if (preset.id !== 'gemini') {
       setLocalSttApiKey(savedStt);
@@ -777,14 +865,23 @@ export default function SettingsPage() {
   };
 
   const handleApplyTtsPreset = (preset: (typeof KNOWN_TTS_PROVIDERS)[0]) => {
-    // 1. Save previous TTS key if present
-    if (localTtsApiKey.trim() && localTtsProvider) {
+    const oldPid = localTtsProvider;
+    // 1. Save previous TTS key if present and not browser
+    if (localTtsApiKey.trim() && oldPid && oldPid !== 'browser') {
+      const cleanKey = localTtsApiKey.trim();
       setTtsVaultKeys((prev) => {
-        const updated = { ...prev, [localTtsProvider]: localTtsApiKey.trim() };
+        const updated = { ...prev, [oldPid]: cleanKey };
         localStorage.setItem('app_tts_provider_keys', JSON.stringify(updated));
-        localStorage.setItem(`app_tts_provider_key_${localTtsProvider}`, localTtsApiKey.trim());
+        localStorage.setItem(`app_tts_provider_key_${oldPid}`, cleanKey);
         return updated;
       });
+      setVaultKeys((prev) => {
+        const updated = { ...prev, [oldPid]: cleanKey };
+        localStorage.setItem('app_provider_keys', JSON.stringify(updated));
+        localStorage.setItem(`app_provider_key_${oldPid}`, cleanKey);
+        return updated;
+      });
+      setTtsProviderKey(oldPid, cleanKey);
     }
 
     // 2. Set new preset
@@ -805,13 +902,24 @@ export default function SettingsPage() {
     }
 
     // 3. Load saved TTS key for this provider (Strict key isolation: isolated from general LLM keys)
-    const savedTts = ttsVaultKeys[newPid] || getSavedTtsKeyForProvider(newPid) || '';
-
-    setLocalTtsApiKey(savedTts);
+    if (newPid === 'browser') {
+      setLocalTtsApiKey('');
+    } else {
+      const savedTts =
+        ttsVaultKeys[newPid] ||
+        vaultKeys[newPid] ||
+        getSavedTtsKeyForProvider(newPid) ||
+        '';
+      setLocalTtsApiKey(savedTts);
+    }
 
     toast({
       title: `${preset.name} Selected`,
-      description: savedTts ? `Loaded saved voice key for ${preset.name}. Default voice: ${preset.defaultVoice}.` : `Voice provider set to ${preset.name}.`,
+      description: newPid === 'browser'
+        ? 'Using standard browser Web Speech synthesis.'
+        : (ttsVaultKeys[newPid] || vaultKeys[newPid] || getSavedTtsKeyForProvider(newPid))
+        ? `Loaded saved voice key for ${preset.name}. Default voice: ${preset.defaultVoice}.`
+        : `Voice provider set to ${preset.name}. Enter your API key below or in the Saved Keys Vault.`,
     });
   };
 
@@ -912,12 +1020,20 @@ export default function SettingsPage() {
     const completeVault: Record<string, string> = {
       ...providerKeys,
       ...vaultKeys,
+      ...sttVaultKeys,
+      ...ttsVaultKeys,
     };
     if (localGeminiKey.trim()) {
       completeVault['gemini'] = localGeminiKey.trim();
     }
     if (targetCustomPid && localCustomKey.trim()) {
       completeVault[targetCustomPid] = localCustomKey.trim();
+    }
+    if (localSttProvider && localSttApiKey.trim()) {
+      completeVault[localSttProvider] = localSttApiKey.trim();
+    }
+    if (localTtsProvider && localTtsProvider !== 'browser' && localTtsApiKey.trim()) {
+      completeVault[localTtsProvider] = localTtsApiKey.trim();
     }
     saveAllProviderKeys(completeVault, targetCustomPid);
 
@@ -942,7 +1058,7 @@ export default function SettingsPage() {
 
     const completeSttVault = {
       ...sttVaultKeys,
-      [localSttProvider]: localSttApiKey.trim(),
+      ...(localSttApiKey.trim() ? { [localSttProvider]: localSttApiKey.trim() } : {}),
     };
     saveAllSttProviderKeys(completeSttVault);
 
@@ -961,7 +1077,7 @@ export default function SettingsPage() {
 
     const completeTtsVault = {
       ...ttsVaultKeys,
-      [localTtsProvider]: localTtsApiKey.trim(),
+      ...(localTtsProvider !== 'browser' && localTtsApiKey.trim() ? { [localTtsProvider]: localTtsApiKey.trim() } : {}),
     };
     saveAllTtsProviderKeys(completeTtsVault);
 
@@ -1553,10 +1669,10 @@ export default function SettingsPage() {
             <div className="space-y-1">
               <CardTitle className="text-base sm:text-lg font-bold flex items-center gap-2 text-foreground">
                 <Key className="h-4 w-4 text-amber-500" />
-                Saved API Keys Vault (Multi-Provider Local Storage)
+                Saved API Keys Vault (Unified Multi-Provider Local Storage)
               </CardTitle>
               <CardDescription className="text-xs text-muted-foreground">
-                Manage all your LLM provider keys in one place. Keys are safely stored locally in your browser sandbox and automatically recalled when you switch providers.
+                Manage all your AI service keys (LLMs, Voice Dictation STT, and Audio Speech TTS) in one centralized sandbox. Keys are securely isolated per provider, stored locally in your browser, and instantly loaded without cross-contamination.
               </CardDescription>
             </div>
             <span className="stamp-badge stamp-confirmed text-[9px] py-0.5 px-2 hidden sm:inline-flex items-center gap-1">
@@ -1568,18 +1684,33 @@ export default function SettingsPage() {
 
         <CardContent className="p-5 sm:p-6 space-y-4">
           <div className="text-xs text-muted-foreground leading-relaxed">
-            Enter your API keys for any provider below. Whenever you switch to that provider, MediGen will automatically use your saved key so you never have to re-enter it.
+            Enter your API keys for any provider below. Whenever you switch to that provider for LLM generation, STT transcription, or Voice TTS synthesis, MediGen will automatically load your saved key without overwriting other services.
           </div>
 
           <div className="space-y-3">
-            {KNOWN_AI_PROVIDERS.map((p) => {
-              const isCurrentActive =
+            {ALL_VAULT_PROVIDERS.map((p) => {
+              const isCurrentActiveLlm =
                 (provider === 'gemini' && p.id === 'gemini') ||
                 (provider === 'custom' && activeCustomProviderId === p.id);
 
-              const currentVal = p.id === 'gemini' 
-                ? localGeminiKey 
-                : (p.id === activeCustomProviderId ? localCustomKey : (vaultKeys[p.id] || ''));
+              const isCurrentActiveStt = localSttProvider === p.id;
+              const isCurrentActiveTts = localTtsProvider === p.id;
+
+              // Value resolution priority for this specific provider
+              let currentVal = vaultKeys[p.id] || '';
+              if (p.id === 'gemini') {
+                currentVal = localGeminiKey || currentVal;
+              } else if (p.id === activeCustomProviderId) {
+                currentVal = localCustomKey || currentVal;
+              } else if (p.id === localTtsProvider && localTtsApiKey.trim()) {
+                currentVal = localTtsApiKey || currentVal;
+              } else if (p.id === localSttProvider && localSttApiKey.trim()) {
+                currentVal = localSttApiKey || currentVal;
+              } else if (ttsVaultKeys[p.id]) {
+                currentVal = ttsVaultKeys[p.id];
+              } else if (sttVaultKeys[p.id]) {
+                currentVal = sttVaultKeys[p.id];
+              }
 
               const hasKey = !!currentVal.trim();
               const isKeyVisible = !!visibleVaultKeys[p.id];
@@ -1588,22 +1719,53 @@ export default function SettingsPage() {
                 <div
                   key={p.id}
                   className={`p-3.5 rounded-xl border transition-all ${
-                    isCurrentActive
+                    isCurrentActiveLlm || isCurrentActiveTts || isCurrentActiveStt
                       ? 'border-primary/60 bg-primary/5 ring-1 ring-primary/20'
                       : 'border-border bg-background hover:bg-muted/30'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
                         <span>{p.name}</span>
                       </span>
-                      {isCurrentActive && (
+
+                      {/* Provider usage badges */}
+                      <div className="flex items-center gap-1">
+                        {p.usageTags.map((tag) => (
+                          <span
+                            key={tag}
+                            className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-semibold ${
+                              tag === 'LLM'
+                                ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20'
+                                : tag === 'TTS'
+                                ? 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20'
+                                : 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20'
+                            }`}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Active status indicators */}
+                      {isCurrentActiveLlm && (
                         <span className="text-[9px] font-mono px-2 py-0.2 rounded-full bg-primary text-primary-foreground font-bold">
-                          Active Provider
+                          Active LLM
                         </span>
                       )}
-                      {hasKey && !isCurrentActive && (
+                      {isCurrentActiveTts && (
+                        <span className="text-[9px] font-mono px-2 py-0.2 rounded-full bg-indigo-600 text-white font-bold">
+                          Active TTS
+                        </span>
+                      )}
+                      {isCurrentActiveStt && (
+                        <span className="text-[9px] font-mono px-2 py-0.2 rounded-full bg-purple-600 text-white font-bold">
+                          Active STT
+                        </span>
+                      )}
+
+                      {hasKey && !isCurrentActiveLlm && !isCurrentActiveTts && !isCurrentActiveStt && (
                         <span className="text-[9px] font-mono px-2 py-0.2 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/30">
                           ✓ Key Saved
                         </span>
@@ -1615,7 +1777,7 @@ export default function SettingsPage() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {p.apiKeyUrl && (
                         <a
                           href={p.apiKeyUrl}
@@ -1627,15 +1789,41 @@ export default function SettingsPage() {
                           <span className="hidden sm:inline">Get Key</span>
                         </a>
                       )}
-                      {!isCurrentActive && (
+
+                      {/* Quick activate buttons */}
+                      {p.usageTags.includes('LLM') && !isCurrentActiveLlm && (
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => handleActivateProviderFromVault(p)}
-                          className="h-7 text-[11px] px-2.5 rounded-lg border-border hover:border-primary/40 text-foreground font-semibold"
+                          className="h-7 text-[11px] px-2 rounded-lg border-border hover:border-primary/40 text-foreground font-medium"
                         >
-                          Use Provider
+                          Use for LLM
+                        </Button>
+                      )}
+
+                      {p.usageTags.includes('TTS') && !isCurrentActiveTts && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleActivateTtsFromVault(p)}
+                          className="h-7 text-[11px] px-2 rounded-lg border-indigo-500/30 hover:border-indigo-500/60 text-indigo-700 dark:text-indigo-300 font-medium bg-indigo-50/50 dark:bg-indigo-950/30"
+                        >
+                          Use for TTS
+                        </Button>
+                      )}
+
+                      {p.usageTags.includes('STT') && !isCurrentActiveStt && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleActivateSttFromVault(p)}
+                          className="h-7 text-[11px] px-2 rounded-lg border-purple-500/30 hover:border-purple-500/60 text-purple-700 dark:text-purple-300 font-medium bg-purple-50/50 dark:bg-purple-950/30"
+                        >
+                          Use for STT
                         </Button>
                       )}
                     </div>

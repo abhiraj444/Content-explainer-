@@ -29,6 +29,136 @@ export interface ProviderPresetInfo {
     supportsVision?: boolean;
 }
 
+export interface VaultProviderInfo {
+    id: string;
+    name: string;
+    description: string;
+    endpoint?: string;
+    defaultModel?: string;
+    placeholder: string;
+    apiKeyUrl?: string;
+    keyPrefix?: string;
+    usageTags: Array<'LLM' | 'STT' | 'TTS'>;
+}
+
+export const ALL_VAULT_PROVIDERS: VaultProviderInfo[] = [
+    {
+        id: 'gemini',
+        name: 'Google Gemini',
+        description: 'Powers Gemini 3.7 Flash & Pro reasoning models, Gemini audio fallback, and native multimodal speech synthesis.',
+        endpoint: 'https://generativelanguage.googleapis.com',
+        defaultModel: 'gemini-3.7-flash',
+        placeholder: 'AIzaSy...',
+        apiKeyUrl: 'https://aistudio.google.com/apikey',
+        keyPrefix: 'AIza',
+        usageTags: ['LLM', 'STT', 'TTS'],
+    },
+    {
+        id: 'groq',
+        name: 'Groq Cloud',
+        description: 'Ultra-fast LPU inference for Llama 3.3, Whisper Large V3 Turbo transcription, and Orpheus voice synthesis.',
+        endpoint: 'https://api.groq.com/openai/v1',
+        defaultModel: 'llama-3.3-70b-versatile',
+        placeholder: 'gsk_...',
+        apiKeyUrl: 'https://console.groq.com/keys',
+        keyPrefix: 'gsk_',
+        usageTags: ['LLM', 'STT', 'TTS'],
+    },
+    {
+        id: 'openai',
+        name: 'OpenAI',
+        description: 'Official OpenAI GPT-4o / o3-mini models, Whisper STT, and studio-grade OpenAI TTS.',
+        endpoint: 'https://api.openai.com/v1',
+        defaultModel: 'gpt-4o',
+        placeholder: 'sk-proj-... or sk-...',
+        apiKeyUrl: 'https://platform.openai.com/api-keys',
+        keyPrefix: 'sk-',
+        usageTags: ['LLM', 'STT', 'TTS'],
+    },
+    {
+        id: 'openrouter',
+        name: 'OpenRouter',
+        description: 'Universal gateway for Claude 3.7, DeepSeek R1, GPT-4o, and multi-model voice synthesis.',
+        endpoint: 'https://openrouter.ai/api/v1',
+        defaultModel: 'deepseek/deepseek-r1',
+        placeholder: 'sk-or-v1-...',
+        apiKeyUrl: 'https://openrouter.ai/keys',
+        keyPrefix: 'sk-or-',
+        usageTags: ['LLM', 'TTS'],
+    },
+    {
+        id: 'anthropic',
+        name: 'Anthropic (Claude)',
+        description: 'Claude 3.7 Sonnet & Claude 3.5 Haiku intelligence for clinical and general notes.',
+        endpoint: 'https://api.anthropic.com/v1',
+        defaultModel: 'claude-3-7-sonnet-20250219',
+        placeholder: 'sk-ant-...',
+        apiKeyUrl: 'https://console.anthropic.com/settings/keys',
+        keyPrefix: 'sk-ant-',
+        usageTags: ['LLM'],
+    },
+    {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        description: 'Official DeepSeek V3 and DeepSeek R1 reasoning models with transparent chain-of-thought.',
+        endpoint: 'https://api.deepseek.com/v1',
+        defaultModel: 'deepseek-chat',
+        placeholder: 'sk-...',
+        apiKeyUrl: 'https://platform.deepseek.com/api_keys',
+        keyPrefix: 'sk-',
+        usageTags: ['LLM'],
+    },
+    {
+        id: 'cerebras',
+        name: 'Cerebras Cloud',
+        description: 'Wafer-scale Llama 3.3 70B inference at over 2,600 tokens per second.',
+        endpoint: 'https://api.cerebras.ai/v1',
+        defaultModel: 'llama-3.3-70b',
+        placeholder: 'csk-...',
+        apiKeyUrl: 'https://cloud.cerebras.ai',
+        keyPrefix: 'csk-',
+        usageTags: ['LLM'],
+    },
+    {
+        id: 'sarvam',
+        name: 'Sarvam AI (Bulbul Neural TTS)',
+        description: 'High-fidelity Indian neural voice synthesis for 10 regional Indian languages and Indian-accented English.',
+        endpoint: 'https://api.sarvam.ai/text-to-speech',
+        defaultModel: 'bulbul:v3',
+        placeholder: 'api-subscription-key from sarvam.ai',
+        apiKeyUrl: 'https://sarvam.ai',
+        usageTags: ['TTS'],
+    },
+    {
+        id: 'elevenlabs',
+        name: 'ElevenLabs',
+        description: 'Hyper-realistic voice synthesis with emotional depth and studio clarity.',
+        endpoint: 'https://api.elevenlabs.io/v1/text-to-speech',
+        defaultModel: 'eleven_multilingual_v2',
+        placeholder: 'xi-...',
+        apiKeyUrl: 'https://elevenlabs.io',
+        usageTags: ['TTS'],
+    },
+    {
+        id: 'ollama',
+        name: 'Ollama (Local Host)',
+        description: 'Self-hosted local models running directly on your machine or private network.',
+        endpoint: 'http://localhost:11434/v1',
+        defaultModel: 'llama3.2-vision',
+        placeholder: 'Optional (leave blank for local server)',
+        usageTags: ['LLM'],
+    },
+    {
+        id: 'custom',
+        name: 'Custom OpenAI-Compatible Endpoint',
+        description: 'Custom self-hosted vLLM, LM Studio, FastChat, Kokoro-FastAPI, or private API gateway.',
+        endpoint: '',
+        defaultModel: 'gpt-4o',
+        placeholder: 'sk-... or Bearer token',
+        usageTags: ['LLM', 'STT', 'TTS'],
+    },
+];
+
 export const KNOWN_AI_PROVIDERS: ProviderPresetInfo[] = [
     {
         id: 'gemini',
@@ -366,12 +496,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             loadedProviderKeys = {};
         }
 
-        // Migrate standalone provider keys if available
-        const knownIds = ['gemini', 'groq', 'openai', 'openrouter', 'anthropic', 'deepseek', 'cerebras', 'ollama', 'custom'];
-        for (const pid of knownIds) {
+        // Migrate standalone provider keys if available across all recognized providers
+        const allKnownVaultIds = ALL_VAULT_PROVIDERS.map((p) => p.id);
+        for (const pid of allKnownVaultIds) {
             const standalone = localStorage.getItem(`app_provider_key_${pid}`);
+            const standaloneTts = localStorage.getItem(`app_tts_provider_key_${pid}`);
+            const standaloneStt = localStorage.getItem(`app_stt_provider_key_${pid}`);
             if (standalone && !loadedProviderKeys[pid]) {
                 loadedProviderKeys[pid] = standalone;
+            } else if (standaloneTts && !loadedProviderKeys[pid]) {
+                loadedProviderKeys[pid] = standaloneTts;
+            } else if (standaloneStt && !loadedProviderKeys[pid]) {
+                loadedProviderKeys[pid] = standaloneStt;
             }
         }
         // Also check legacy gemini_api_key and app_custom_api_key
@@ -393,6 +529,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             const standaloneStt = localStorage.getItem(`app_stt_provider_key_${spid}`);
             if (standaloneStt && !loadedSttKeys[spid]) {
                 loadedSttKeys[spid] = standaloneStt;
+            } else if (loadedProviderKeys[spid] && !loadedSttKeys[spid]) {
+                loadedSttKeys[spid] = loadedProviderKeys[spid];
             }
         }
         const legacySttKey = localStorage.getItem('app_stt_api_key');
@@ -685,9 +823,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
     const getSavedKeyForProvider = (providerId: string): string => {
         if (providerId === 'gemini') {
-            return geminiApiKey || providerKeys['gemini'] || localStorage.getItem('gemini_api_key') || localStorage.getItem('app_provider_key_gemini') || '';
+            return providerKeys['gemini'] || geminiApiKey || (typeof window !== 'undefined' ? (localStorage.getItem('gemini_api_key') || localStorage.getItem('app_provider_key_gemini') || '') : '');
         }
-        return providerKeys[providerId] || localStorage.getItem(`app_provider_key_${providerId}`) || '';
+        return providerKeys[providerId] || (typeof window !== 'undefined' ? (localStorage.getItem(`app_provider_key_${providerId}`) || localStorage.getItem(`app_tts_provider_key_${providerId}`) || localStorage.getItem(`app_stt_provider_key_${providerId}`) || '') : '');
     };
 
     const saveAllProviderKeys = (keys: Record<string, string>, currentPid?: string) => {
@@ -788,60 +926,77 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSttProviderInternal(provider);
 
         if (autoLoadKey) {
-            const savedKey = provider === 'gemini' 
-                ? (geminiApiKey || providerKeys['gemini'] || '')
-                : (sttProviderKeys[provider] || localStorage.getItem(`app_stt_provider_key_${provider}`) || '');
+            const savedKey = getSavedSttKeyForProvider(provider);
             if (savedKey) {
                 setSttApiKeyInternal(savedKey);
                 localStorage.setItem('app_stt_api_key', savedKey);
+            } else {
+                setSttApiKeyInternal('');
+                localStorage.setItem('app_stt_api_key', '');
             }
         }
     };
 
     const setSttApiKey = (key: string, providerId?: string) => {
-        localStorage.setItem('app_stt_api_key', key);
-        setSttApiKeyInternal(key);
+        const cleanKey = key.trim();
+        localStorage.setItem('app_stt_api_key', cleanKey);
+        setSttApiKeyInternal(cleanKey);
 
         const targetPid = providerId || sttProvider;
         if (targetPid) {
-            localStorage.setItem(`app_stt_provider_key_${targetPid}`, key);
+            localStorage.setItem(`app_stt_provider_key_${targetPid}`, cleanKey);
             setSttProviderKeys((prev) => {
-                const updated = { ...prev, [targetPid]: key };
+                const updated = { ...prev, [targetPid]: cleanKey };
                 localStorage.setItem('app_stt_provider_keys', JSON.stringify(updated));
+                return updated;
+            });
+            // Also synchronize into master provider keys vault
+            localStorage.setItem(`app_provider_key_${targetPid}`, cleanKey);
+            setProviderKeys((prev) => {
+                const updated = { ...prev, [targetPid]: cleanKey };
+                localStorage.setItem('app_provider_keys', JSON.stringify(updated));
                 return updated;
             });
         }
     };
 
     const setSttProviderKey = (providerId: string, key: string) => {
-        localStorage.setItem(`app_stt_provider_key_${providerId}`, key);
+        const cleanKey = key.trim();
+        localStorage.setItem(`app_stt_provider_key_${providerId}`, cleanKey);
         setSttProviderKeys((prev) => {
-            const updated = { ...prev, [providerId]: key };
+            const updated = { ...prev, [providerId]: cleanKey };
             localStorage.setItem('app_stt_provider_keys', JSON.stringify(updated));
             return updated;
         });
+        localStorage.setItem(`app_provider_key_${providerId}`, cleanKey);
+        setProviderKeys((prev) => {
+            const updated = { ...prev, [providerId]: cleanKey };
+            localStorage.setItem('app_provider_keys', JSON.stringify(updated));
+            return updated;
+        });
         if (providerId === sttProvider) {
-            setSttApiKeyInternal(key);
-            localStorage.setItem('app_stt_api_key', key);
+            setSttApiKeyInternal(cleanKey);
+            localStorage.setItem('app_stt_api_key', cleanKey);
         }
     };
 
     const getSavedSttKeyForProvider = (providerId: string): string => {
         if (providerId === 'gemini') {
-            return geminiApiKey || providerKeys['gemini'] || '';
+            return sttProviderKeys['gemini'] || providerKeys['gemini'] || geminiApiKey || (typeof window !== 'undefined' ? (localStorage.getItem('app_stt_provider_key_gemini') || localStorage.getItem('gemini_api_key') || '') : '');
         }
-        return sttProviderKeys[providerId] || localStorage.getItem(`app_stt_provider_key_${providerId}`) || '';
+        return sttProviderKeys[providerId] || providerKeys[providerId] || (typeof window !== 'undefined' ? (localStorage.getItem(`app_stt_provider_key_${providerId}`) || localStorage.getItem(`app_provider_key_${providerId}`) || '') : '');
     };
 
     const saveAllSttProviderKeys = (keys: Record<string, string>) => {
         setSttProviderKeys(keys);
         localStorage.setItem('app_stt_provider_keys', JSON.stringify(keys));
         for (const [pid, key] of Object.entries(keys)) {
-            if (key !== undefined) localStorage.setItem(`app_stt_provider_key_${pid}`, key);
+            if (key !== undefined) localStorage.setItem(`app_stt_provider_key_${pid}`, key.trim());
         }
         if (keys[sttProvider] !== undefined) {
-            setSttApiKeyInternal(keys[sttProvider]);
-            localStorage.setItem('app_stt_api_key', keys[sttProvider]);
+            const clean = (keys[sttProvider] || '').trim();
+            setSttApiKeyInternal(clean);
+            localStorage.setItem('app_stt_api_key', clean);
         }
     };
 
@@ -882,64 +1037,94 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTtsProviderInternal(provider);
 
         if (autoLoadKey) {
-            const savedKey = ttsProviderKeys[provider] || localStorage.getItem(`app_tts_provider_key_${provider}`) || '';
-            if (savedKey) {
-                setTtsApiKeyInternal(savedKey);
-                localStorage.setItem('app_tts_api_key', savedKey);
+            if (provider === 'browser') {
+                setTtsApiKeyInternal('');
+                localStorage.setItem('app_tts_api_key', '');
+            } else {
+                const savedKey = getSavedTtsKeyForProvider(provider);
+                if (savedKey) {
+                    setTtsApiKeyInternal(savedKey);
+                    localStorage.setItem('app_tts_api_key', savedKey);
+                } else {
+                    setTtsApiKeyInternal('');
+                    localStorage.setItem('app_tts_api_key', '');
+                }
             }
         }
     };
 
     const setTtsApiKey = (key: string, providerId?: string) => {
-        localStorage.setItem('app_tts_api_key', key);
-        setTtsApiKeyInternal(key);
+        const cleanKey = key.trim();
+        localStorage.setItem('app_tts_api_key', cleanKey);
+        setTtsApiKeyInternal(cleanKey);
 
         const targetPid = providerId || ttsProvider;
-        if (targetPid) {
-            localStorage.setItem(`app_tts_provider_key_${targetPid}`, key);
+        if (targetPid && targetPid !== 'browser') {
+            localStorage.setItem(`app_tts_provider_key_${targetPid}`, cleanKey);
             setTtsProviderKeys((prev) => {
-                const updated = { ...prev, [targetPid]: key };
+                const updated = { ...prev, [targetPid]: cleanKey };
                 localStorage.setItem('app_tts_provider_keys', JSON.stringify(updated));
+                return updated;
+            });
+            // Also synchronize into master provider keys vault
+            localStorage.setItem(`app_provider_key_${targetPid}`, cleanKey);
+            setProviderKeys((prev) => {
+                const updated = { ...prev, [targetPid]: cleanKey };
+                localStorage.setItem('app_provider_keys', JSON.stringify(updated));
                 return updated;
             });
         }
     };
 
     const setTtsProviderKey = (providerId: string, key: string) => {
-        localStorage.setItem(`app_tts_provider_key_${providerId}`, key);
+        const cleanKey = key.trim();
+        localStorage.setItem(`app_tts_provider_key_${providerId}`, cleanKey);
         setTtsProviderKeys((prev) => {
-            const updated = { ...prev, [providerId]: key };
+            const updated = { ...prev, [providerId]: cleanKey };
             localStorage.setItem('app_tts_provider_keys', JSON.stringify(updated));
             return updated;
         });
+        localStorage.setItem(`app_provider_key_${providerId}`, cleanKey);
+        setProviderKeys((prev) => {
+            const updated = { ...prev, [providerId]: cleanKey };
+            localStorage.setItem('app_provider_keys', JSON.stringify(updated));
+            return updated;
+        });
         if (providerId === ttsProvider) {
-            setTtsApiKeyInternal(key);
-            localStorage.setItem('app_tts_api_key', key);
+            setTtsApiKeyInternal(cleanKey);
+            localStorage.setItem('app_tts_api_key', cleanKey);
         }
     };
 
     const getSavedTtsKeyForProvider = useCallback((providerId: string): string => {
+        if (!providerId || providerId === 'browser') return '';
+        // 1. Direct TTS provider vault key
         if (ttsProviderKeys[providerId]) return ttsProviderKeys[providerId];
-        const standalone = typeof window !== 'undefined' ? localStorage.getItem(`app_tts_provider_key_${providerId}`) : '';
-        if (standalone) return standalone;
-        if (providerId === 'gemini') return geminiApiKey || providerKeys['gemini'] || (typeof window !== 'undefined' ? (localStorage.getItem('gemini_api_key') || '') : '');
-        if (providerId === 'groq') return sttApiKey || sttProviderKeys['groq'] || providerKeys['groq'] || '';
-        if (providerId === 'openai') return providerKeys['openai'] || sttProviderKeys['openai'] || '';
-        if (providerId === 'openrouter') return providerKeys['openrouter'] || '';
-        if (providerId === 'custom') return customApiKey || providerKeys['custom'] || '';
+        // 2. Direct TTS standalone key
+        const standaloneTts = typeof window !== 'undefined' ? localStorage.getItem(`app_tts_provider_key_${providerId}`) : '';
+        if (standaloneTts) return standaloneTts;
+        // 3. For Gemini specifically, check gemini key
+        if (providerId === 'gemini') {
+            return providerKeys['gemini'] || geminiApiKey || (typeof window !== 'undefined' ? (localStorage.getItem('gemini_api_key') || localStorage.getItem('app_provider_key_gemini') || '') : '');
+        }
+        // 4. Provider vault key for the exact SAME provider (e.g. user entered their Sarvam or Groq or OpenAI key in vault)
+        if (providerKeys[providerId]) return providerKeys[providerId];
+        const standaloneProvider = typeof window !== 'undefined' ? localStorage.getItem(`app_provider_key_${providerId}`) : '';
+        if (standaloneProvider) return standaloneProvider;
         return '';
-    }, [ttsProviderKeys, geminiApiKey, providerKeys, sttApiKey, sttProviderKeys, customApiKey]);
+    }, [ttsProviderKeys, geminiApiKey, providerKeys]);
 
     const saveAllTtsProviderKeys = (keys: Record<string, string>, currentPid?: string) => {
         setTtsProviderKeys(keys);
         localStorage.setItem('app_tts_provider_keys', JSON.stringify(keys));
         for (const [pid, key] of Object.entries(keys)) {
-            if (key !== undefined) localStorage.setItem(`app_tts_provider_key_${pid}`, key);
+            if (key !== undefined) localStorage.setItem(`app_tts_provider_key_${pid}`, key.trim());
         }
         const activePid = currentPid || ttsProvider;
         if (keys[activePid] !== undefined) {
-            setTtsApiKeyInternal(keys[activePid]);
-            localStorage.setItem('app_tts_api_key', keys[activePid]);
+            const clean = (keys[activePid] || '').trim();
+            setTtsApiKeyInternal(clean);
+            localStorage.setItem('app_tts_api_key', clean);
         }
     };
 
