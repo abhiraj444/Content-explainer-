@@ -309,7 +309,7 @@ export async function POST(req: NextRequest) {
     // 3. Main LLM / Content Generation Testing Mode
     // =========================================================================
     const provider = config.provider || body.provider || (directEndpoint ? 'custom' : 'gemini');
-    const userPrompt = prompt || 'Respond with the single word "READY" to verify AI readiness.';
+    const userPrompt = (overrides.prompt || rawPrompt || rawText || config.prompt || 'Respond with the single word "READY" to verify AI readiness.').trim();
 
     // 3A. Custom Endpoint or Third-party OpenAI-compatible LLM
     if (provider === 'custom' || directEndpoint) {

@@ -1434,48 +1434,6 @@ export default function SettingsPage() {
                   Saved separately for <strong>{activeCustomProviderId}</strong> in local browser storage. When you switch to other providers and come back, your key is automatically restored.
                 </p>
               </div>
-
-              {/* Custom JSON Parameters */}
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="custom-llm-params" className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                    <FileJson className="h-3.5 w-3.5 text-primary" />
-                    Custom Request Parameters (JSON)
-                  </Label>
-                  <span className="text-[10px] text-muted-foreground font-mono">e.g. temperature, max_tokens, reasoning_effort</span>
-                </div>
-                <Textarea
-                  id="custom-llm-params"
-                  value={localCustomParams}
-                  onChange={(e) => {
-                    setLocalCustomParams(e.target.value);
-                    setCustomParams(e.target.value);
-                  }}
-                  placeholder={`{\n  "temperature": 0.2,\n  "max_tokens": 4096\n}`}
-                  className="text-xs font-mono min-h-[75px] resize-y bg-background"
-                />
-              </div>
-
-              {/* Custom HTTP Headers */}
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="custom-llm-headers" className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                    <Code2 className="h-3.5 w-3.5 text-indigo-500" />
-                    Custom HTTP Headers (Optional)
-                  </Label>
-                  <span className="text-[10px] text-muted-foreground font-mono">One header per line (Header-Name: Value)</span>
-                </div>
-                <Textarea
-                  id="custom-llm-headers"
-                  value={localCustomHeaders}
-                  onChange={(e) => {
-                    setLocalCustomHeaders(e.target.value);
-                    setCustomHeaders(e.target.value);
-                  }}
-                  placeholder={`HTTP-Referer: https://medigen.app\nX-Title: MediGen AI`}
-                  className="text-xs font-mono min-h-[65px] resize-y bg-background"
-                />
-              </div>
             </TabsContent>
           </Tabs>
 
